@@ -1,6 +1,31 @@
 [profile.default]
-src = "src"
-out = "out"
-libs = ["lib"]
+src = 'src'
+out = 'out'
+libs = ['lib', 'node_modules']
+gas_reports_ignore = ["test", "script"]
+ffi = true
+ast = true
+build_info = true
+extra_output = ["storageLayout", "metadata", "evm.deployedBytecode.object"]
 
-# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
+solc = "0.8.30"
+optimizer = true
+optimizer_runs = 10000
+coverage = true
+
+remappings = [
+    "@forge-std/=lib/forge-std/src/",
+    "ds-test/=lib/forge-std/lib/ds-test/src/",
+    "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/"
+]
+
+[fmt]
+tab_width = 4
+line_length = 120
+bracket_spacing = true
+int_types = "long"
+quote_style = "double"
+wrap_comments = true
+number_underscore = "thousands"
+
+# See more config options https://github.com/foundry-rs/foundry/tree/master/config
