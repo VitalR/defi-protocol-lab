@@ -16,8 +16,12 @@ coverage = true
 remappings = [
     "@forge-std/=lib/forge-std/src/",
     "ds-test/=lib/forge-std/lib/ds-test/src/",
-    "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/"
+    "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+    "@era-contracts/=lib/mock-era-contracts/src/system-contracts/contracts/"
 ]
+
+# System call simulate for zksync
+is-system = true
 
 [fmt]
 tab_width = 4
