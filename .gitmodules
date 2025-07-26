@@ -13,3 +13,6 @@
 [submodule "lib/mock-era-contracts"]
 	path = lib/mock-era-contracts
 	url = https://github.com/cyfrin/mock-era-contracts
+[submodule "lib/foundry-devops"]
+	path = lib/foundry-devops
+	url = https://github.com/Cyfrin/foundry-devops
