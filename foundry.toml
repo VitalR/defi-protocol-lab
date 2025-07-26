@@ -23,6 +23,12 @@ remappings = [
 # System call simulate for zksync
 is-system = true
 
+# foundry-devops
+fs_permissions = [
+    { access = "read", path = "./broadcast" },
+    { access = "read", path = "./reports" },
+]
+
 [fmt]
 tab_width = 4
 line_length = 120
