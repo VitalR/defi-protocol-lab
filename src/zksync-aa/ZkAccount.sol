@@ -14,7 +14,6 @@ import { INonceHolder } from "@era-contracts/interfaces/INonceHolder.sol";
 import { Utils } from "@era-contracts/libraries/Utils.sol";
 
 // OZ Imports
-import { MessageHashUtils } from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
@@ -137,7 +136,6 @@ contract ZkAccount is IAccount, Ownable {
 
         // Check the signature
         bytes32 txHash = _transaction.encodeHash();
-        // bytes32 convertedHash = MessageHashUtils.toEthSignedMessageHash(txHash);
         address signer = ECDSA.recover(txHash, _transaction.signature);
         bool isValidSigner = signer == owner();
         if (isValidSigner) {

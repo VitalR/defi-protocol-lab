@@ -10,16 +10,13 @@ import { Transaction, MemoryTransactionHelper } from "@era-contracts/libraries/M
 import { BOOTLOADER_FORMAL_ADDRESS } from "@era-contracts/Constants.sol";
 import { ACCOUNT_VALIDATION_SUCCESS_MAGIC } from "@era-contracts/interfaces/IAccount.sol";
 
-// OZ Imports
-import { MessageHashUtils } from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
-
 // Foundry Devops
 import { ZkSyncChainChecker } from "lib/foundry-devops/src/ZkSyncChainChecker.sol";
 
 contract ZkAccountTest is Test, ZkSyncChainChecker {
     using MessageHashUtils for bytes32;
 
-    ZkMinimalAccount minimalAccount;
+    ZkAccount zkAccount;
     ERC20Mock usdc;
     bytes4 constant EIP1271_SUCCESS_RETURN_VALUE = 0x1626ba7e;
 
@@ -28,42 +25,60 @@ contract ZkAccountTest is Test, ZkSyncChainChecker {
     address constant ANVIL_DEFAULT_ACCOUNT = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
 
     function setUp() public {
-        minimalAccount = new ZkMinimalAccount();
-        minimalAccount.transferOwnership(ANVIL_DEFAULT_ACCOUNT);
+        zkAccount = new ZkAccount();
+        zkAccount.transferOwnership(ANVIL_DEFAULT_ACCOUNT);
         usdc = new ERC20Mock();
-        vm.deal(address(minimalAccount), AMOUNT);
+        vm.deal(address(zkAccount), AMOUNT);
     }
 
     function testZkOwnerCanExecuteCommands() public {
         // Arrange
         address dest = address(usdc);
         uint256 value = 0;
-        bytes memory functionData = abi.encodeWithSelector(ERC20Mock.mint.selector, address(minimalAccount), AMOUNT);
+        bytes memory functionData = abi.encodeWithSelector(ERC20Mock.mint.selector, address(zkAccount), AMOUNT);
 
         Transaction memory transaction =
-            _createUnsignedTransaction(minimalAccount.owner(), 113, dest, value, functionData);
+            _createUnsignedTransaction(zkAccount.owner(), 113, dest, value, functionData);
 
         // Act
-        vm.prank(minimalAccount.owner());
-        minimalAccount.executeTransaction(EMPTY_BYTES32, EMPTY_BYTES32, transaction);
+        vm.prank(zkAccount.owner());
+        zkAccount.executeTransaction(EMPTY_BYTES32, EMPTY_BYTES32, transaction);
 
         // Assert
-        assertEq(usdc.balanceOf(address(minimalAccount)), AMOUNT);
+        assertEq(usdc.balanceOf(address(zkAccount)), AMOUNT);
     }
+
+    function testZkBootLoaderCanExecuteCommands() public {
+        assertEq(address(BOOTLOADER_FORMAL_ADDRESS).balance, 0);
+
+        // Arrange
+        address dest = address(usdc);
+        uint256 value = 0;
+        bytes memory functionData = abi.encodeWithSelector(ERC20Mock.mint.selector, address(zkAccount), AMOUNT);
+        Transaction memory transaction =
+            _createUnsignedTransaction(zkAccount.owner(), 113, dest, value, functionData);
+
+        // Act
+        vm.prank(address(BOOTLOADER_FORMAL_ADDRESS));
+        zkAccount.executeTransaction(EMPTY_BYTES32, EMPTY_BYTES32, transaction);
+
+        // Assert
+        assertEq(usdc.balanceOf(address(zkAccount)), AMOUNT);
+    }   
 
     // You'll also need --system-mode=true to run this test
     function testZkValidateTransaction() public onlyZkSync {
         // Arrange
         address dest = address(usdc);
         uint256 value = 0;
-        bytes memory functionData = abi.encodeWithSelector(ERC20Mock.mint.selector, address(minimalAccount), AMOUNT);
+        bytes memory functionData = abi.encodeWithSelector(ERC20Mock.mint.selector, address(zkAccount), AMOUNT);
         Transaction memory transaction =
-            _createUnsignedTransaction(minimalAccount.owner(), 113, dest, value, functionData);
+            _createUnsignedTransaction(zkAccount.owner(), 113, dest, value, functionData);
         transaction = _signTransaction(transaction);
 
         // Act
         vm.prank(BOOTLOADER_FORMAL_ADDRESS);
-        bytes4 magic = minimalAccount.validateTransaction(EMPTY_BYTES32, EMPTY_BYTES32, transaction);
+        bytes4 magic = zkAccount.validateTransaction(EMPTY_BYTES32, EMPTY_BYTES32, transaction);
 
         // Assert
         assertEq(magic, ACCOUNT_VALIDATION_SUCCESS_MAGIC);
@@ -74,7 +89,6 @@ contract ZkAccountTest is Test, ZkSyncChainChecker {
     //////////////////////////////////////////////////////////////*/
     function _signTransaction(Transaction memory transaction) internal view returns (Transaction memory) {
         bytes32 unsignedTransactionHash = MemoryTransactionHelper.encodeHash(transaction);
-        // bytes32 digest = unsignedTransactionHash.toEthSignedMessageHash();
         uint8 v;
         bytes32 r;
         bytes32 s;
@@ -92,7 +106,7 @@ contract ZkAccountTest is Test, ZkSyncChainChecker {
         uint256 value,
         bytes memory data
     ) internal view returns (Transaction memory) {
-        uint256 nonce = vm.getNonce(address(minimalAccount));
+        uint256 nonce = vm.getNonce(address(zkAccount));
         bytes32[] memory factoryDeps = new bytes32[](0);
         return Transaction({
             txType: transactionType, // type 113 (0x71).
