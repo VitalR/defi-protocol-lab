@@ -1,12 +1,55 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.30;
+pragma solidity ^0.8.20;
 
+/// @title IAaveV3 Core Interfaces (minimal)
+/// @notice Minimal surface used by integrations: Pool + PoolAddressesProvider.
+/// @dev This is a minimal subset (stable across Aave V3 releases) suitable for supply/withdraw/borrow/repay.
+///      If you need flash loans or data providers, extend here or import the canonical Aave interfaces.
 interface IPool {
+    /// @notice Supply an ERC-20 `asset` into the Aave Pool on behalf of `onBehalfOf`.
+    /// @param asset The ERC-20 asset to supply.
+    /// @param amount The amount to supply (units of `asset`).
+    /// @param onBehalfOf The account that receives the aTokens and the credit.
+    /// @param referralCode Optional referral code (0 if not used).
     function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode) external;
+
+    /// @notice Withdraw up to `amount` of `asset` to address `to`.
+    /// @dev Use `type(uint256).max` to withdraw the full aToken balance.
+    /// @return The actual amount withdrawn.
     function withdraw(address asset, uint256 amount, address to) external returns (uint256);
+
+    /// @notice Enable or disable an asset as collateral for the caller.
+    /// @param asset The supplied asset to toggle as collateral.
+    /// @param useAsCollateral True to enable; false to disable.
     function setUserUseReserveAsCollateral(address asset, bool useAsCollateral) external;
-    function borrow(address asset, uint256 amount, uint256 interestRateMode, uint16 referralCode, address onBehalfOf) external;
-    function repay(address asset, uint256 amount, uint256 interestRateMode, address onBehalfOf) external returns (uint256);
+
+    /// @notice Borrow `asset` with selected interest mode on behalf of `onBehalfOf`.
+    /// @param asset The ERC-20 debt asset to borrow.
+    /// @param amount The amount to borrow.
+    /// @param interestRateMode 1 = Stable (if enabled on market), 2 = Variable.
+    /// @param referralCode Optional referral code (0 if not used).
+    /// @param onBehalfOf The account that receives the debt.
+    function borrow(address asset, uint256 amount, uint256 interestRateMode, uint16 referralCode, address onBehalfOf)
+        external;
+
+    /// @notice Repay an existing debt.
+    /// @param asset The debt asset being repaid.
+    /// @param amount The amount to repay (use `type(uint256).max` to repay all variable debt).
+    /// @param interestRateMode 1 = Stable, 2 = Variable (must match the debt type).
+    /// @param onBehalfOf The user whose debt is reduced.
+    /// @return The actual repaid amount.
+    function repay(address asset, uint256 amount, uint256 interestRateMode, address onBehalfOf)
+        external
+        returns (uint256);
+
+    /// @notice Return account-level risk metrics (all values in base currency units unless noted).
+    /// @param user The account to query.
+    /// @return totalCollateralBase Total collateral value (base units)
+    /// @return totalDebtBase Total debt value (base units)
+    /// @return availableBorrowsBase Additional borrowable value (base units)
+    /// @return currentLiquidationThreshold User threshold (bps, 10000 = 100%)
+    /// @return ltv Loan-to-Value (bps)
+    /// @return healthFactor Health factor (wad, 1e18 = 1.0)
     function getUserAccountData(address user)
         external
         view
@@ -21,5 +64,6 @@ interface IPool {
 }
 
 interface IPoolAddressesProvider {
+    /// @notice Current Pool proxy address for this market.
     function getPool() external view returns (address);
 }
