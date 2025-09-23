@@ -1,0 +1,26 @@
+{
+  "lib/forge-std": {
+    "rev": "77041d2ce690e692d6e03cc812b57d1ddaa4d505"
+  },
+  "lib/aave-v3-origin": {
+    "rev": "5431379f8beb4d7128c84a81ced3917d856efa84"
+  },
+  "lib/aave-address-book": {
+    "tag": {
+      "name": "v4.31.0",
+      "rev": "c389d532542450fa9920c64a60b19f542d1ee6ba"
+    }
+  },
+  "lib/mock-era-contracts": {
+    "rev": "3f99de4a37b126c5cb0466067f37be0c932167b2"
+  },
+  "lib/foundry-devops": {
+    "rev": "efff097a87e70c3d15661c9f2a2daeae0b33d5d5"
+  },
+  "lib/openzeppelin-contracts": {
+    "rev": "c64a1edb67b6e3f4a15cca8909c9482ad33a02b0"
+  },
+  "lib/aave-v3-core": {
+    "rev": "2031a54d5ab6f72fd7877acf497cb82e97e0fe8b"
+  }
+}
