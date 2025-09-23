@@ -4,6 +4,7 @@ pragma solidity 0.8.30;
 import { Test, console2 } from "forge-std/Test.sol";
 import { ZkAccount } from "src/zksync-aa/ZkAccount.sol";
 import { ERC20Mock } from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
+import { MessageHashUtils } from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
 // Era Imports
 import { Transaction, MemoryTransactionHelper } from "@era-contracts/libraries/MemoryTransactionHelper.sol";
