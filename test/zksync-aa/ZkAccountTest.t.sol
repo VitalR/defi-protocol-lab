@@ -38,8 +38,7 @@ contract ZkAccountTest is Test, ZkSyncChainChecker {
         uint256 value = 0;
         bytes memory functionData = abi.encodeWithSelector(ERC20Mock.mint.selector, address(zkAccount), AMOUNT);
 
-        Transaction memory transaction =
-            _createUnsignedTransaction(zkAccount.owner(), 113, dest, value, functionData);
+        Transaction memory transaction = _createUnsignedTransaction(zkAccount.owner(), 113, dest, value, functionData);
 
         // Act
         vm.prank(zkAccount.owner());
@@ -56,8 +55,7 @@ contract ZkAccountTest is Test, ZkSyncChainChecker {
         address dest = address(usdc);
         uint256 value = 0;
         bytes memory functionData = abi.encodeWithSelector(ERC20Mock.mint.selector, address(zkAccount), AMOUNT);
-        Transaction memory transaction =
-            _createUnsignedTransaction(zkAccount.owner(), 113, dest, value, functionData);
+        Transaction memory transaction = _createUnsignedTransaction(zkAccount.owner(), 113, dest, value, functionData);
 
         // Act
         vm.prank(address(BOOTLOADER_FORMAL_ADDRESS));
@@ -65,7 +63,7 @@ contract ZkAccountTest is Test, ZkSyncChainChecker {
 
         // Assert
         assertEq(usdc.balanceOf(address(zkAccount)), AMOUNT);
-    }   
+    }
 
     // You'll also need --system-mode=true to run this test
     function testZkValidateTransaction() public onlyZkSync {
@@ -73,8 +71,7 @@ contract ZkAccountTest is Test, ZkSyncChainChecker {
         address dest = address(usdc);
         uint256 value = 0;
         bytes memory functionData = abi.encodeWithSelector(ERC20Mock.mint.selector, address(zkAccount), AMOUNT);
-        Transaction memory transaction =
-            _createUnsignedTransaction(zkAccount.owner(), 113, dest, value, functionData);
+        Transaction memory transaction = _createUnsignedTransaction(zkAccount.owner(), 113, dest, value, functionData);
         transaction = _signTransaction(transaction);
 
         // Act
