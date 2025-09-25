@@ -2,10 +2,10 @@
 pragma solidity 0.8.30;
 
 import "forge-std/Script.sol";
-import {DevOpsTools} from "lib/foundry-devops/src/DevOpsTools.sol";
+import { DevOpsTools } from "lib/foundry-devops/src/DevOpsTools.sol";
 
-import {AaveV3Sepolia, AaveV3SepoliaAssets} from "../../src/aave-v3-yield-strategies/libs/AaveV3Sepolia.sol";
-import {AaveV3MultiAssetStrategy} from "../../src/aave-v3-yield-strategies/AaveV3MultiAssetStrategy.sol";
+import { AaveV3Sepolia, AaveV3SepoliaAssets } from "../../src/aave-v3-yield-strategies/libs/AaveV3Sepolia.sol";
+import { AaveV3MultiAssetStrategy } from "../../src/aave-v3-yield-strategies/AaveV3MultiAssetStrategy.sol";
 
 /// @title DeployAaveV3MultiAssetStrategy
 /// @notice Deploys `AaveV3MultiAssetStrategy` on Ethereum Sepolia and writes a compact JSON report.
@@ -21,7 +21,7 @@ contract DeployAaveV3MultiAssetStrategyScript is Script {
         address defaultAdmin = vm.addr(deployerKey);
 
         // --- Aave endpoints (vendored constants) ---
-        address provider     = AaveV3Sepolia.POOL_ADDRESSES_PROVIDER;
+        address provider = AaveV3Sepolia.POOL_ADDRESSES_PROVIDER;
         address dataProvider = AaveV3Sepolia.AAVE_PROTOCOL_DATA_PROVIDER;
 
         // --- Allowlists (seed) ---
@@ -36,9 +36,9 @@ contract DeployAaveV3MultiAssetStrategyScript is Script {
         vm.startBroadcast(deployerKey);
 
         AaveV3MultiAssetStrategy strat = new AaveV3MultiAssetStrategy(
-            defaultAdmin,   // gets DEFAULT_ADMIN_ROLE, ADMIN_ROLE, PAUSER_ROLE per ctor
-            provider,       // PoolAddressesProvider
-            dataProvider,   // ProtocolDataProvider
+            defaultAdmin, // gets DEFAULT_ADMIN_ROLE, ADMIN_ROLE, PAUSER_ROLE per ctor
+            provider, // PoolAddressesProvider
+            dataProvider, // ProtocolDataProvider
             collateral,
             debt
         );
@@ -71,14 +71,10 @@ contract DeployAaveV3MultiAssetStrategyScript is Script {
 
         // arrays (serializeAddressArray is not available; build strings manually)
         string memory collateralJson = _addressesToJsonArray(collateral);
-        string memory debtJson       = _addressesToJsonArray(debt);
+        string memory debtJson = _addressesToJsonArray(debt);
 
         // Wrap into a single payload { deployment: {...}, config: {...} }
-        string memory configJson = string.concat(
-            "{\"collateral\":", collateralJson,
-            ",\"debt\":", debtJson,
-            "}"
-        );
+        string memory configJson = string.concat("{\"collateral\":", collateralJson, ",\"debt\":", debtJson, "}");
         string memory payload = string.concat("{\"deployment\":", deployment, ",\"config\":", configJson, "}");
 
         // Rolling pointer (latest)
@@ -87,12 +83,7 @@ contract DeployAaveV3MultiAssetStrategyScript is Script {
 
         // Versioned history (by block number)
         string memory fileVersioned = string.concat(
-            reportDir,
-            "/deployment-",
-            vm.toString(block.chainid),
-            "-",
-            vm.toString(block.number),
-            ".json"
+            reportDir, "/deployment-", vm.toString(block.chainid), "-", vm.toString(block.number), ".json"
         );
         vm.writeJson(payload, fileVersioned);
 
@@ -122,8 +113,8 @@ contract DeployAaveV3MultiAssetStrategyScript is Script {
         str[0] = "0";
         str[1] = "x";
         for (uint256 i = 0; i < 20; i++) {
-            str[2 + i * 2]     = hexChars[uint8(data[i] >> 4)];
-            str[3 + i * 2]     = hexChars[uint8(data[i] & 0x0f)];
+            str[2 + i * 2] = hexChars[uint8(data[i] >> 4)];
+            str[3 + i * 2] = hexChars[uint8(data[i] & 0x0f)];
         }
         return string(str);
     }
