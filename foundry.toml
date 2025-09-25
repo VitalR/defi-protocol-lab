@@ -1,7 +1,7 @@
 [profile.default]
-src = 'src'
-out = 'out'
-libs = ['lib', 'node_modules']
+src = "src"
+out = "out"
+libs = ["lib"]
 gas_reports_ignore = ["test", "script"]
 ffi = true
 ast = true
@@ -20,13 +20,11 @@ remappings = [
     "@era-contracts/=lib/mock-era-contracts/src/system-contracts/contracts/"
 ]
 
-# System call simulate for zksync
-is-system = true
-
 # foundry-devops
 fs_permissions = [
     { access = "read", path = "./broadcast" },
     { access = "read", path = "./reports" },
+    { access = "write", path = "./reports" }
 ]
 
 [fmt]
