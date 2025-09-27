@@ -66,4 +66,13 @@ interface IPool {
 interface IPoolAddressesProvider {
     /// @notice Current Pool proxy address for this market.
     function getPool() external view returns (address);
+
+    /// @notice Current Price Oracle proxy address for this market.
+    function getPriceOracle() external view returns (address);
+}
+
+/// @notice Minimal Aave oracle surface.
+interface IAaveOracle {
+    /// @dev Price is in base currency units with 8 decimals (1e8 = 1.0 base currency, on Sepolia it's USD).
+    function getAssetPrice(address asset) external view returns (uint256);
 }

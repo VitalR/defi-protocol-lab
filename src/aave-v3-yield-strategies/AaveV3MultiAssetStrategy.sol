@@ -4,12 +4,14 @@ pragma solidity 0.8.30;
 import { AccessControl } from "@openzeppelin/contracts/access/AccessControl.sol";
 import { EnumerableSet } from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
 import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import { IAaveProtocolDataProvider } from "./interfaces/IAaveProtocolDataProvider.sol";
-import { IPool, IPoolAddressesProvider } from "./interfaces/IAaveV3.sol";
+import { IPool, IPoolAddressesProvider, IAaveOracle } from "./interfaces/IAaveV3.sol";
 import { TokenActions } from "./libs/TokenActions.sol";
 
 /// @title AaveV3MultiAssetStrategy (Multi-Asset, Aave V3)
@@ -41,6 +43,14 @@ contract AaveV3MultiAssetStrategy is AccessControl, Pausable, ReentrancyGuard {
 
     /// @notice Aave V3 ProtocolDataProvider (for aToken/debt token discovery).
     IAaveProtocolDataProvider public immutable dataProvider;
+
+    /// @notice Aave price oracle (base currency units, 8 decimals).
+    IAaveOracle public immutable oracle;
+
+    /// @dev Aave oracle and account-data values are quoted in a “base currency” with 8 decimals (1e8 = 1.0 base).
+    ///      This constant documents that scale. In `approxMaxBorrow` we don’t need to use it explicitly because both
+    ///      `availableBorrowsBase` and `getAssetPrice` share the same 1e8 scale and cancel out.
+    uint256 private constant BASE_UNIT = 1e8;
 
     /// @notice Role for admins strategy configuration.
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
@@ -121,8 +131,14 @@ contract AaveV3MultiAssetStrategy is AccessControl, Pausable, ReentrancyGuard {
     /// @notice Thrown when an asset is not allowlisted for the requested action.
     error ASSET_NOT_ALLOWED();
 
+    /// @notice Thrown when the buffer basis points are too high.
+    error BUFFER_BPS_TOO_HIGH();
+
     /// @notice Thrown when an operation requires positive funds but none were provided/received.
     error NO_FUNDS();
+
+    /// @notice Thrown when the asset price is zero.
+    error PRICE_ZERO();
 
     /// @notice Thrown when a zero address is passed where a non-zero address is required.
     error ZERO_ADDRESS();
@@ -174,6 +190,9 @@ contract AaveV3MultiAssetStrategy is AccessControl, Pausable, ReentrancyGuard {
         address poolAddr = IPoolAddressesProvider(_provider).getPool();
         pool = IPool(poolAddr);
         dataProvider = IAaveProtocolDataProvider(_dataProvider);
+
+        address oracleAddr = IPoolAddressesProvider(_provider).getPriceOracle();
+        oracle = IAaveOracle(oracleAddr);
 
         _setCollateralAllowedBatch(_collateralAssets, true);
         _setDebtAllowedBatch(_debtAssets, true);
@@ -245,14 +264,15 @@ contract AaveV3MultiAssetStrategy is AccessControl, Pausable, ReentrancyGuard {
     /// @dev Caller must have adequate collateral and HF.
     /// @param _debtAsset The ERC-20 debt asset to borrow (e.g., USDC).
     /// @param _amount The amount to borrow (must be > 0).
-    function borrowVariable(address _debtAsset, uint256 _amount)
+    /// @param _referralCode Optional Aave referral code (0 if unused).
+    function borrowVariable(address _debtAsset, uint256 _amount, uint16 _referralCode)
         external
         whenNotPaused
         onlyDebtAllowed(_debtAsset)
         nonReentrant
     {
         require(_amount > 0, ZERO_AMOUNT());
-        pool.borrow(_debtAsset, _amount, 2, 0, msg.sender);
+        pool.borrow(_debtAsset, _amount, 2, _referralCode, msg.sender);
         emit Borrowed(msg.sender, _debtAsset, _amount, 2);
     }
 
@@ -402,9 +422,63 @@ contract AaveV3MultiAssetStrategy is AccessControl, Pausable, ReentrancyGuard {
         return IERC20(getVariableDebtToken(_asset)).balanceOf(_user);
     }
 
+    /// @notice Approximate the maximum amount of `_asset` that the caller can borrow right now (no buffer).
+    /// @dev
+    /// - Fetches price from Aave oracle (USD, 8 decimals).
+    /// - Reads `availableBorrowsBase` from Aave (USD, 8 decimals).
+    /// - Converts USD capacity into token amount:
+    ///   amount = (availableBorrowsBase * 10**decimals) / priceUsd
+    /// - BASE_UNIT (1e8) is not explicitly needed since both values share the same scale.
+    /// @param _asset The debt asset to quote for.
+    /// @return maxToken The approximate max amount of `_asset` borrowable (in token base units).
+    function approxMaxBorrow(address _asset) public view returns (uint256 maxToken) {
+        (,,,, uint256 availableBorrowsBase,) = pool.getUserAccountData(msg.sender);
+        return _approxFromBaseCapacity(availableBorrowsBase, _asset);
+    }
+
+    /// @notice Approximate the maximum amount of `_asset` that `_user` can borrow right now (no buffer).
+    /// @param _user User to check.
+    /// @param _asset Debt asset to quote for.
+    /// @return maxToken Maximum borrowable amount in token base units.
+    function approxMaxBorrowFor(address _user, address _asset) external view returns (uint256 maxToken) {
+        (,,,, uint256 availableBorrowsBase,) = pool.getUserAccountData(_user);
+        return _approxFromBaseCapacity(availableBorrowsBase, _asset);
+    }
+
+    /// @notice Approximate the maximum borrow amount with a safety buffer.
+    /// @dev `bufferBps` subtracts a percentage (in basis points) to avoid HF slippage reverts.
+    ///      e.g. `bufferBps = 500` => return 95% of raw quote.
+    /// @param _asset The debt asset to quote for.
+    /// @param _bufferBps Basis points to shave off (0–10_000).
+    /// @return safeMaxToken The buffered max amount (token base units).
+    function approxMaxBorrowWithBuffer(address _asset, uint16 _bufferBps)
+        external
+        view
+        returns (uint256 safeMaxToken)
+    {
+        uint256 raw = approxMaxBorrow(_asset);
+        if (_bufferBps == 0 || raw == 0) return raw;
+        require(_bufferBps <= 10_000, BUFFER_BPS_TOO_HIGH());
+        // safeMax = raw * (10000 - bufferBps) / 10000
+        safeMaxToken = Math.mulDiv(raw, (10_000 - _bufferBps), 10_000);
+    }
+
     // =============================================================
     //                       INTERNAL HELPERS
     // =============================================================
+
+    /// @dev Shared math: converts a base-currency borrowing capacity (1e8) into token units.
+    /// Reverts if oracle price is zero.
+    function _approxFromBaseCapacity(uint256 availableBorrowsBase, address _asset) internal view returns (uint256) {
+        if (availableBorrowsBase == 0) return 0;
+
+        uint256 px = oracle.getAssetPrice(_asset); // 1e8 base units per 1 token
+        if (px == 0) revert PRICE_ZERO();
+
+        uint256 scale = 10 ** uint256(IERC20Metadata(_asset).decimals());
+        // (available * scale) / price, avoiding overflow and preserving precision
+        return Math.mulDiv(availableBorrowsBase, scale, px);
+    }
 
     /// @notice Internal function to batch add/remove assets in collateral allowlist.
     function _setCollateralAllowedBatch(address[] memory _assets, bool _allow) internal {
