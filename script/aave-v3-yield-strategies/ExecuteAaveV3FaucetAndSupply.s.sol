@@ -41,6 +41,7 @@ contract ExecuteAaveV3FaucetAndSupplyScript is Script {
         // mintAll();
         // Example: supply 1 WBTC and set as collateral
         supplyToken(WBTC, 1e8, 0, true); // 1 WBTC (8 decimals)
+            // borrowToken(WBTC, 0);
     }
 
     // ---------- Entry 1: Mint from Aave Faucet ----------
@@ -64,18 +65,6 @@ contract ExecuteAaveV3FaucetAndSupplyScript is Script {
         // }
 
         vm.stopBroadcast();
-    }
-
-    /// @notice Helper to scale and call faucet.mint.
-    function _mintSafe(address token, uint256 units, uint8 decimals, string memory sym) internal returns (bool ok) {
-        uint256 amt = units * (10 ** decimals);
-        try FAUCET.mint(token, msg.sender, amt) returns (uint256 ret) {
-            console2.log("Minted %s -> request: %s, return: %s", sym, amt, ret);
-            return true;
-        } catch {
-            console2.log("Faucet cannot mint %s (skipped / fallback if WETH).", sym);
-            return false;
-        }
     }
 
     // ---------- Entry 2: Supply tokens to Strategy ----------
@@ -120,7 +109,65 @@ contract ExecuteAaveV3FaucetAndSupplyScript is Script {
         console2.log("  referral      :", referralCode);
     }
 
+    // ---------- Borrow Flow ----------
+    function borrowToken(address token, uint16 referralCode) public {
+        uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        vm.startBroadcast(pk);
+
+        address strategyAddr = _resolveStrategy();
+        AaveV3MultiAssetStrategy strat = AaveV3MultiAssetStrategy(payable(strategyAddr));
+
+        console2.log("=== Borrow Flow ===");
+        console2.log("  strategy        :", strategyAddr);
+        console2.log("  token           :", token);
+
+        // 1. Allowlist token as debt
+        address[] memory arr = new address[](1);
+        arr[0] = token;
+        strat.setDebtAllowedBatch(arr, true);
+        console2.log("  debt allowlisted :", token);
+
+        // 2. Sanity check
+        bool allowed = strat.isDebtAllowed(token);
+        require(allowed, "Token not debt-allowed");
+
+        // 3. Approximate max borrow
+        uint256 maxBorrow = strat.approxMaxBorrow(token);
+        uint256 buffer = (maxBorrow * 90) / 100; // 90% buffer
+        console2.log("  max borrow approx   :", maxBorrow);
+        console2.log("  with buffer (90%)   :", buffer);
+
+        // 4. Check health factor before
+        uint256 hfBefore = strat.healthFactor(msg.sender);
+        console2.log("  health factor (before) :", hfBefore);
+
+        // 5. Borrow (variable)
+        strat.borrowVariable(token, buffer, referralCode);
+        console2.log("  borrow executed     :", buffer);
+
+        // 6. Debt balance & HF after
+        uint256 debt = strat.getVariableDebtBalanceOfUser(token, msg.sender);
+        uint256 hfAfter = strat.healthFactor(msg.sender);
+
+        console2.log("  debt balance (var)    :", debt);
+        console2.log("  health factor (after) :", hfAfter);
+
+        vm.stopBroadcast();
+    }
+
     // ---------- Utils ----------
+    /// @notice Helper to scale and call faucet.mint.
+    function _mintSafe(address token, uint256 units, uint8 decimals, string memory sym) internal returns (bool ok) {
+        uint256 amt = units * (10 ** decimals);
+        try FAUCET.mint(token, msg.sender, amt) returns (uint256 ret) {
+            console2.log("Minted %s -> request: %s, return: %s", sym, amt, ret);
+            return true;
+        } catch {
+            console2.log("Faucet cannot mint %s (skipped / fallback if WETH).", sym);
+            return false;
+        }
+    }
+
     function _resolveStrategy() internal view returns (address strategy) {
         // Try env first; if none, fall back to DevOpsTools’ last deployment pointer
         try vm.envAddress("STRATEGY") returns (address s) {
@@ -130,7 +177,7 @@ contract ExecuteAaveV3FaucetAndSupplyScript is Script {
         require(strategy != address(0), "strategy not found; set STRATEGY env");
     }
 
-    function _envUintOrDefault(string memory key, uint256 def) internal returns (uint256 out) {
+    function _envUintOrDefault(string memory key, uint256 def) internal view returns (uint256 out) {
         try vm.envUint(key) returns (uint256 v) {
             return v;
         } catch {

@@ -13,7 +13,8 @@
 	anvil-sepolia \
 	deploy-aave-sepolia \
 	exec-mint-all exec-supply-weth \
-	check-env-sepolia
+	check-env-sepolia \
+	exec-borrow-token \
 
 # ------------- Chain config (Ethereum Sepolia) -------------
 
@@ -145,3 +146,26 @@ exec-supply-dai:
 exec-supply-link:
 	@if [ -z "$(AMOUNT)" ]; then echo "Usage: make exec-supply-link AMOUNT=<uint256> [REFERRAL=0] [SETCOLLATERAL=0]"; exit 1; fi
 	@$(MAKE) exec-supply-token TOKEN=$(LINK_TOKEN) AMOUNT=$(AMOUNT) REFERRAL=$${REFERRAL:-0} SETCOLLATERAL=$${SETCOLLATERAL:-0}
+
+## Borrow any allowed token using strategy’s approxMaxBorrow (with built-in 90% buffer)
+## Usage: make exec-borrow-token TOKEN=0x... [REFERRAL=0]
+exec-borrow-token:
+	@if [ -z "$(TOKEN)" ]; then \
+		echo "Usage: make exec-borrow-token TOKEN=0x<addr> [REFERRAL=0]"; \
+		exit 1; \
+	fi
+	@REFERRAL=$${REFERRAL:-0}; \
+	echo "Borrowing token $(TOKEN) with referral=$$REFERRAL"; \
+	set -a; [ -f .env ] && . ./.env; set +a; \
+	forge script $(EXEC_SCRIPT) \
+		--sig "borrowToken(address,uint16)" $(TOKEN) $$REFERRAL \
+		--rpc-url $(SEPOLIA_RPC_URL) \
+		--private-key $(DEPLOYER_PRIVATE_KEY) \
+		--broadcast \
+		-vvvv
+
+## Convenience wrappers
+exec-borrow-wbtc: ; $(MAKE) exec-borrow-token TOKEN=$(WBTC_TOKEN) REFERRAL=$${REFERRAL:-0}
+exec-borrow-usdc: ; $(MAKE) exec-borrow-token TOKEN=$(USDC_TOKEN) REFERRAL=$${REFERRAL:-0}
+exec-borrow-dai:  ; $(MAKE) exec-borrow-token TOKEN=$(DAI_TOKEN)  REFERRAL=$${REFERRAL:-0}
+exec-borrow-link: ; $(MAKE) exec-borrow-token TOKEN=$(LINK_TOKEN) REFERRAL=$${REFERRAL:-0}
