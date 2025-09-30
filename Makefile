@@ -169,3 +169,21 @@ exec-borrow-wbtc: ; $(MAKE) exec-borrow-token TOKEN=$(WBTC_TOKEN) REFERRAL=$${RE
 exec-borrow-usdc: ; $(MAKE) exec-borrow-token TOKEN=$(USDC_TOKEN) REFERRAL=$${REFERRAL:-0}
 exec-borrow-dai:  ; $(MAKE) exec-borrow-token TOKEN=$(DAI_TOKEN)  REFERRAL=$${REFERRAL:-0}
 exec-borrow-link: ; $(MAKE) exec-borrow-token TOKEN=$(LINK_TOKEN) REFERRAL=$${REFERRAL:-0}
+
+## Repay ALL variable debt for a token via script
+## Usage: make exec-repay-all TOKEN=0x...
+## Example (use predefined constants if present):
+##   make exec-repay-all TOKEN=$(USDC_TOKEN)
+exec-repay-all:
+	@if [ -z "$(TOKEN)" ]; then \
+		echo "Usage: make exec-repay-all TOKEN=0x<addr>"; \
+		exit 1; \
+	fi
+	@echo "Repaying ALL variable debt for TOKEN=$(TOKEN) on Sepolia"; \
+	set -a; [ -f .env ] && . ./.env; set +a; \
+	forge script $(EXEC_SCRIPT) \
+		--sig "repayAllDebt(address)" $(TOKEN) \
+		--rpc-url $(SEPOLIA_RPC_URL) \
+		--private-key $(DEPLOYER_PRIVATE_KEY) \
+		--broadcast \
+		-vvvv
