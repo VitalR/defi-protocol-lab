@@ -297,6 +297,59 @@ contract AaveV3MultiAssetStrategy is AccessControl, Pausable, ReentrancyGuard {
         emit Repaid(msg.sender, _debtAsset, received, 2);
     }
 
+    /// @notice Repay the caller's entire variable-rate debt for `_debtAsset`.
+    /// @dev
+    /// - Pulls just enough tokens from the caller to fully wipe the debt (with +1 unit buffer),
+    ///   approves the Pool for the received amount, and calls `repay(..., type(uint256).max, ...)`.
+    /// - If small interest accrues between the read and the first repay, a second pass is executed.
+    /// - Any leftover tokens held by this contract after repaying are refunded to the caller.
+    /// @param _debtAsset The borrowed ERC-20 asset to repay (e.g., USDC).
+    /// @return totalRepaid The total variable debt reduction achieved (in `_debtAsset` units).
+    function repayAllVariable(address _debtAsset)
+        external
+        whenNotPaused
+        onlyDebtAllowed(_debtAsset)
+        nonReentrant
+        returns (uint256 totalRepaid)
+    {
+        // 1) Read initial debt
+        address vDebt = getVariableDebtToken(_debtAsset);
+        uint256 debtBefore = IERC20(vDebt).balanceOf(msg.sender);
+        require(debtBefore > 0, NO_FUNDS());
+
+        // 2) First pull + repay (use +1 unit buffer to cover race)
+        uint256 toPull1 = debtBefore + 1;
+        uint256 received1 = TokenActions.pullFrom(IERC20(_debtAsset), msg.sender, toPull1);
+        require(received1 > 0, NO_FUNDS());
+
+        TokenActions.approveExact(IERC20(_debtAsset), address(pool), received1);
+        pool.repay(_debtAsset, type(uint256).max, 2, msg.sender);
+
+        // 3) Check remaining debt; if any, do second pass
+        uint256 remaining = IERC20(vDebt).balanceOf(msg.sender);
+        if (remaining > 0) {
+            uint256 toPull2 = remaining + 1;
+            uint256 received2 = TokenActions.pullFrom(IERC20(_debtAsset), msg.sender, toPull2);
+            require(received2 > 0, NO_FUNDS());
+
+            TokenActions.approveExact(IERC20(_debtAsset), address(pool), received2);
+            pool.repay(_debtAsset, type(uint256).max, 2, msg.sender);
+
+            remaining = IERC20(vDebt).balanceOf(msg.sender);
+        }
+
+        // 4) Compute repaid amount by delta on variable debt token
+        totalRepaid = debtBefore - remaining;
+
+        // 5) Refund any leftover `_debtAsset` back to the user (e.g., due to +1 buffer)
+        uint256 leftover = IERC20(_debtAsset).balanceOf(address(this));
+        if (leftover > 0) {
+            IERC20(_debtAsset).safeTransfer(msg.sender, leftover);
+        }
+
+        emit Repaid(msg.sender, _debtAsset, totalRepaid, 2);
+    }
+
     // =============================================================
     //                        ADMIN ACTIONS
     // =============================================================

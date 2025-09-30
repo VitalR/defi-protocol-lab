@@ -159,61 +159,95 @@ contract ExecuteAaveV3FaucetAndSupplyScript is Script {
         vm.stopBroadcast();
     }
 
-    // ---------- Entry 4: Repay ALL variable debt for `token` ----------
-    function repayAllDebt(address token) public {
+    // ---------- Entry 4: Repay an exact AMOUNT of variable debt for `token` ----------
+    function repayAmount(address token, uint256 amount) public {
+        require(amount > 0, "amount=0");
+
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         vm.startBroadcast(pk);
 
         address strategyAddr = _resolveStrategy();
         AaveV3MultiAssetStrategy strat = AaveV3MultiAssetStrategy(payable(strategyAddr));
 
-        console2.log("=== Repay-All Flow ===");
+        console2.log("=== Repay-Amount Flow ===");
         console2.log("  strategy                :", strategyAddr);
         console2.log("  token                   :", token);
+        console2.log("  amount                  :", amount);
 
-        // 1) Read current variable debt & HF before
-        uint256 debtBefore = strat.getVariableDebtBalanceOfUser(token, msg.sender);
-        require(debtBefore > 0, "no variable debt");
-        uint256 hfBefore = strat.healthFactor(msg.sender);
-
-        console2.log("  debt (before)           :", debtBefore);
-        console2.log("  health factor (before)  :", hfBefore);
-
-        // 2) Make sure caller has enough token to cover debt + small buffer (0.1% + 1 wei)
-        //    This guards against a few seconds of interest accrual between reads and repay.
-        uint256 buffer = debtBefore / 1000 + 1; // ~0.1% buffer
-        uint256 repayTarget = debtBefore + buffer;
-
-        uint256 bal = IERC20(token).balanceOf(msg.sender);
-        if (bal < repayTarget) {
-            uint256 shortfall = repayTarget - bal;
-            // Try to mint shortfall from Aave faucet (works for USDC/WBTC/DAI/LINK on Sepolia; WETH is not mintable).
-            try FAUCET.mint(token, msg.sender, shortfall) returns (uint256 minted) {
-                console2.log("  topped up from faucet       :", minted);
-            } catch {
-                console2.log("  faucet top-up failed; have=%s need=%s", bal, repayTarget);
-                revert("insufficient balance to repay");
-            }
+        // Ensure token is debt-allowed (idempotent)
+        if (!strat.isDebtAllowed(token)) {
+            address[] memory arr = new address[](1);
+            arr[0] = token;
+            strat.setDebtAllowedBatch(arr, true);
+            console2.log("  debt allowlisted        :", token);
         }
 
-        // 3) Approve the STRATEGY to pull funds and repay (strategy → Pool)
-        IERC20(token).approve(address(strat), repayTarget);
-        console2.log("  approved strategy           :", repayTarget);
+        // Debt & HF before
+        uint256 debtBefore = strat.getVariableDebtBalanceOfUser(token, msg.sender);
+        uint256 hfBefore = strat.healthFactor(msg.sender);
+        console2.log("  debt before repay       :", debtBefore);
+        console2.log("  health factor (before)  :", hfBefore);
 
-        // 4) Repay. Strategy will pull and call Aave Pool's repay().
-        strat.repayVariable(token, repayTarget);
-        console2.log("  repay call sent             :", repayTarget);
+        // User must hold/approve at least `amount`
+        uint256 walletBal = IERC20(token).balanceOf(msg.sender);
+        console2.log("  wallet balance          :", walletBal);
+        require(walletBal >= amount, "insufficient wallet balance");
 
-        // 5) Read debt & HF after, compute actual repaid amount
+        // Approve pull -> strategy.repayVariable(token, amount)
+        IERC20(token).approve(strategyAddr, 0);
+        IERC20(token).approve(strategyAddr, amount);
+        console2.log("  approved to strat       :", amount);
+
+        strat.repayVariable(token, amount);
+        console2.log("  repay executed          :", amount);
+
+        // Debt & HF after
         uint256 debtAfter = strat.getVariableDebtBalanceOfUser(token, msg.sender);
         uint256 hfAfter = strat.healthFactor(msg.sender);
-        uint256 repaid = debtBefore > debtAfter ? (debtBefore - debtAfter) : 0;
 
         vm.stopBroadcast();
 
-        console2.log("  debt (after)                :", debtAfter);
-        console2.log("  health factor (after)       :", hfAfter);
-        console2.log("  actually repaid             :", repaid);
+        console2.log("  debt after repay        :", debtAfter);
+        console2.log("  health factor (after)   :", hfAfter);
+        console2.log("=== Repay-Amount Flow: complete ===");
+    }
+
+    /// @notice Fully repay variable-rate debt for `token` using the strategy’s repay-all helper.
+    /// @dev Ensures `token` is debt-allowed, logs HF & balances before/after.
+    function repayAllToken(address token) public {
+        uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        vm.startBroadcast(pk);
+
+        address strategyAddr = _resolveStrategy();
+        AaveV3MultiAssetStrategy strat = AaveV3MultiAssetStrategy(payable(strategyAddr));
+
+        console2.log("=== Repay All (Variable) ===");
+        console2.log("  strategy        :", strategyAddr);
+        console2.log("  token           :", token);
+
+        // 0) Ensure token is debt-allowed (idempotent)
+        address[] memory arr = new address[](1);
+        arr[0] = token;
+        strat.setDebtAllowedBatch(arr, true);
+        require(strat.isDebtAllowed(token), "Token not debt-allowed");
+
+        // 1) Snapshot before
+        uint256 hfBefore = strat.healthFactor(msg.sender);
+        uint256 debtBefore = strat.getVariableDebtBalanceOfUser(token, msg.sender);
+        console2.log("  debt (before)   :", debtBefore);
+        console2.log("  HF   (before)   :", hfBefore);
+
+        // 2) Repay all
+        uint256 repaid = strat.repayAllVariable(token);
+        console2.log("  repaid          :", repaid);
+
+        // 3) Snapshot after
+        uint256 debtAfter = strat.getVariableDebtBalanceOfUser(token, msg.sender);
+        uint256 hfAfter = strat.healthFactor(msg.sender);
+        console2.log("  debt (after)    :", debtAfter);
+        console2.log("  HF   (after)    :", hfAfter);
+
+        vm.stopBroadcast();
     }
 
     // ---------- Utils ----------

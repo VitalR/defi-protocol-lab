@@ -170,19 +170,30 @@ exec-borrow-usdc: ; $(MAKE) exec-borrow-token TOKEN=$(USDC_TOKEN) REFERRAL=$${RE
 exec-borrow-dai:  ; $(MAKE) exec-borrow-token TOKEN=$(DAI_TOKEN)  REFERRAL=$${REFERRAL:-0}
 exec-borrow-link: ; $(MAKE) exec-borrow-token TOKEN=$(LINK_TOKEN) REFERRAL=$${REFERRAL:-0}
 
-## Repay ALL variable debt for a token via script
-## Usage: make exec-repay-all TOKEN=0x...
-## Example (use predefined constants if present):
-##   make exec-repay-all TOKEN=$(USDC_TOKEN)
-exec-repay-all:
-	@if [ -z "$(TOKEN)" ]; then \
-		echo "Usage: make exec-repay-all TOKEN=0x<addr>"; \
+## Repay an exact AMOUNT of variable debt
+## Usage: make exec-repay-amount TOKEN=0x... AMOUNT=12345
+exec-repay-amount:
+	@if [ -z "$(TOKEN)" ] || [ -z "$(AMOUNT)" ]; then \
+		echo "Usage: make exec-repay-amount TOKEN=0x<addr> AMOUNT=<uint256>"; \
 		exit 1; \
 	fi
-	@echo "Repaying ALL variable debt for TOKEN=$(TOKEN) on Sepolia"; \
+	@echo "Repaying AMOUNT=$(AMOUNT) for TOKEN=$(TOKEN) on Sepolia"; \
 	set -a; [ -f .env ] && . ./.env; set +a; \
 	forge script $(EXEC_SCRIPT) \
-		--sig "repayAllDebt(address)" $(TOKEN) \
+		--sig "repayAmount(address,uint256)" $(TOKEN) $(AMOUNT) \
+		--rpc-url $(SEPOLIA_RPC_URL) \
+		--private-key $(DEPLOYER_PRIVATE_KEY) \
+		--broadcast \
+		-vvvv
+
+## Repay ALL variable debt for a token via the exec script
+## Usage: make exec-repay-all-token TOKEN=0x...
+exec-repay-all-token:
+	@if [ -z "$(TOKEN)" ]; then echo "Usage: make exec-repay-all-token TOKEN=0x<addr>"; exit 1; fi
+	@echo "Repaying ALL variable debt for token $(TOKEN)"
+	@set -a; [ -f .env ] && . ./.env; set +a; \
+	forge script $(EXEC_SCRIPT) \
+		--sig "repayAllToken(address)" $(TOKEN) \
 		--rpc-url $(SEPOLIA_RPC_URL) \
 		--private-key $(DEPLOYER_PRIVATE_KEY) \
 		--broadcast \
