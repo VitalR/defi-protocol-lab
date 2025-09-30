@@ -250,6 +250,56 @@ contract ExecuteAaveV3FaucetAndSupplyScript is Script {
         vm.stopBroadcast();
     }
 
+    // ---------- Entry 5: Withdraw ALL supplied amount of `token` ----------
+    function withdrawAllToken(address token) public {
+        uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        vm.startBroadcast(pk);
+
+        address strategyAddr = _resolveStrategy();
+        AaveV3MultiAssetStrategy strat = AaveV3MultiAssetStrategy(payable(strategyAddr));
+
+        console2.log("=== Withdraw-All Flow ===");
+        console2.log("  strategy        :", strategyAddr);
+        console2.log("  token           :", token);
+
+        // Ensure token is collateral-allowed (withdraw uses onlyCollateralAllowed)
+        if (!strat.isCollateralAllowed(token)) {
+            address[] memory arr = new address[](1);
+            arr[0] = token;
+            strat.setCollateralAllowedBatch(arr, true);
+            console2.log("  collateral allowlisted:", token);
+        }
+
+        // Pre-state
+        address aToken = strat.getAToken(token);
+        uint256 aBalBefore = IERC20(aToken).balanceOf(msg.sender);
+        uint256 uBalBefore = IERC20(token).balanceOf(msg.sender);
+        uint256 hfBefore = strat.healthFactor(msg.sender);
+
+        console2.log("  aToken before   :", aBalBefore);
+        console2.log("  underlying before:", uBalBefore);
+        console2.log("  health factor (before):", hfBefore);
+
+        // Withdraw all via strategy (internally uses type(uint256).max)
+        strat.withdrawAll(token);
+
+        // Post-state
+        uint256 aBalAfter = IERC20(aToken).balanceOf(msg.sender);
+        uint256 uBalAfter = IERC20(token).balanceOf(msg.sender);
+        uint256 hfAfter = strat.healthFactor(msg.sender);
+
+        vm.stopBroadcast();
+
+        // Compute withdrawn amount = delta in underlying
+        uint256 withdrawn = uBalAfter > uBalBefore ? (uBalAfter - uBalBefore) : 0;
+
+        console2.log("  aToken after    :", aBalAfter);
+        console2.log("  underlying after:", uBalAfter);
+        console2.log("  withdrawn       :", withdrawn);
+        console2.log("  health factor (after):", hfAfter);
+        console2.log("=== Withdraw-All Flow: complete ===");
+    }
+
     // ---------- Utils ----------
     /// @notice Helper to scale and call faucet.mint.
     function _mintSafe(address token, uint256 units, uint8 decimals, string memory sym) internal returns (bool ok) {

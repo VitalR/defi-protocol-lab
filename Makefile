@@ -198,3 +198,19 @@ exec-repay-all-token:
 		--private-key $(DEPLOYER_PRIVATE_KEY) \
 		--broadcast \
 		-vvvv
+
+## Withdraw ALL of a supplied token via the strategy
+## Usage: make exec-withdraw-all TOKEN=0x...
+exec-withdraw-all:
+	@if [ -z "$(TOKEN)" ]; then \
+		echo "Usage: make exec-withdraw-all TOKEN=0x<addr>"; \
+		exit 1; \
+	fi
+	@echo "Withdrawing ALL underlying for TOKEN=$(TOKEN) on Sepolia"; \
+	set -a; [ -f .env ] && . ./.env; set +a; \
+	forge script $(EXEC_SCRIPT) \
+		--sig "withdrawAllToken(address)" $(TOKEN) \
+		--rpc-url $(SEPOLIA_RPC_URL) \
+		--private-key $(DEPLOYER_PRIVATE_KEY) \
+		--broadcast \
+		-vvvv
