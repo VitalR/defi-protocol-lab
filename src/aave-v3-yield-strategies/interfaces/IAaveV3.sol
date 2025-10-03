@@ -42,6 +42,20 @@ interface IPool {
         external
         returns (uint256);
 
+    /// @notice Liquidates a position if the user’s health factor is below 1.
+    /// @param collateralAsset The address of the underlying asset used as collateral, to be seized
+    /// @param debtAsset       The address of the underlying borrowed asset being repaid
+    /// @param user            The undercollateralized user’s address
+    /// @param debtToCover     The amount of debt to repay (in debt asset units)
+    /// @param receiveAToken   If true, the liquidator receives aTokens; if false, receives underlying collateral
+    function liquidationCall(
+        address collateralAsset,
+        address debtAsset,
+        address user,
+        uint256 debtToCover,
+        bool receiveAToken
+    ) external;
+
     /// @notice Return account-level risk metrics (all values in base currency units unless noted).
     /// @param user The account to query.
     /// @return totalCollateralBase Total collateral value (base units)
