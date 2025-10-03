@@ -15,6 +15,9 @@
 	exec-mint-all exec-supply-weth \
 	check-env-sepolia \
 	exec-borrow-token \
+	exec-simulate-liq \
+	exec-create-risky \
+	exec-liquidate
 
 # ------------- Chain config (Ethereum Sepolia) -------------
 
@@ -31,6 +34,7 @@ CONTRACT_SRC     := src/aave-v3-yield-strategies/AaveV3MultiAssetStrategy.sol
 CONTRACT_NAME    := AaveV3MultiAssetStrategy
 DEPLOY_SCRIPT    := script/aave-v3-yield-strategies/DeployAaveV3MultiAssetStrategy.s.sol
 EXEC_SCRIPT      := script/aave-v3-yield-strategies/ExecuteAaveV3FaucetAndSupply.s.sol
+LIQ_SCRIPT 		 := script/aave-v3-yield-strategies/LiquidationPlayground.s.sol
 
 # Deploy report paths (for optional extensions)
 REPORT_DIR       ?= reports
@@ -210,6 +214,67 @@ exec-withdraw-all:
 	set -a; [ -f .env ] && . ./.env; set +a; \
 	forge script $(EXEC_SCRIPT) \
 		--sig "withdrawAllToken(address)" $(TOKEN) \
+		--rpc-url $(SEPOLIA_RPC_URL) \
+		--private-key $(DEPLOYER_PRIVATE_KEY) \
+		--broadcast \
+		-vvvv
+
+# ---------- Simulate liquidation math for a user ----------
+## Usage:
+##   make exec-simulate-liq COLL=$(WBTC_TOKEN) DEBT=$(USDC_TOKEN) USER=0x...
+exec-simulate-liq:
+	@if [ -z "$(COLL)" ] || [ -z "$(DEBT)" ] || [ -z "$(USER)" ]; then \
+	  echo "Usage: make exec-simulate-liq COLL=0x<collateral> DEBT=0x<debtToken> USER=0x<address>"; exit 1; fi
+	@echo "Simulating liquidation on Sepolia"
+	@echo "  collateral: $(COLL)"
+	@echo "  debt token: $(DEBT)"
+	@echo "  user      : $(USER)"
+	@set -a; [ -f .env ] && . ./.env; set +a; \
+	forge script $(LIQ_SCRIPT) \
+		--sig "simulateLiquidation(address,address,address)" $(COLL) $(DEBT) $(USER) \
+		--rpc-url $(SEPOLIA_RPC_URL) \
+		--private-key $(DEPLOYER_PRIVATE_KEY) \
+		-vvvv
+
+# ---------- Create a risky, liquidatable position (testnets/forks) ----------
+## Borrow % of liquidation threshold (bps). Example: 9500 = 95%.
+## Amounts are in base units (e.g. 1e8 for WBTC).
+## Usage:
+##   make exec-create-risky COLL=$(WBTC_TOKEN) DEBT=$(USDC_TOKEN) COLL_AMOUNT=100000000 PCT_BPS=9500
+exec-create-risky:
+	@if [ -z "$(COLL)" ] || [ -z "$(DEBT)" ] || [ -z "$(COLL_AMOUNT)" ] || [ -z "$(PCT_BPS)" ]; then \
+	  echo "Usage: make exec-create-risky COLL=0x<coll> DEBT=0x<debt> COLL_AMOUNT=<uint256> PCT_BPS=<1..10000>"; exit 1; fi
+	@echo "Creating risky position on Sepolia"
+	@echo "  collateral     : $(COLL)"
+	@echo "  debt asset     : $(DEBT)"
+	@echo "  collateral amt : $(COLL_AMOUNT)"
+	@echo "  borrow % of LT : $(PCT_BPS) bps"
+	@set -a; [ -f .env ] && . ./.env; set +a; \
+	forge script $(LIQ_SCRIPT) \
+		--sig "createLiquidatablePosition(address,address,uint256,uint16)" $(COLL) $(DEBT) $(COLL_AMOUNT) $(PCT_BPS) \
+		--rpc-url $(SEPOLIA_RPC_URL) \
+		--private-key $(DEPLOYER_PRIVATE_KEY) \
+		--broadcast \
+		-vvvv
+
+# ---------- Execute a liquidation ----------
+## REPAY is the amount of debt token to repay (bounded by close factor; base units).
+## RECEIVE_ATOKEN: 0 -> receive underlying collateral, 1 -> receive aTokens
+## Usage:
+##   make exec-liquidate COLL=$(WBTC_TOKEN) DEBT=$(USDC_TOKEN) USER=0x... REPAY=1000000 RECEIVE_ATOKEN=0
+exec-liquidate:
+	@if [ -z "$(COLL)" ] || [ -z "$(DEBT)" ] || [ -z "$(USER)" ] || [ -z "$(REPAY)" ]; then \
+	  echo "Usage: make exec-liquidate COLL=0x<coll> DEBT=0x<debt> USER=0x<address> REPAY=<uint256> [RECEIVE_ATOKEN=0|1]"; exit 1; fi
+	@RA=$${RECEIVE_ATOKEN:-0}; \
+	echo "Liquidating on Sepolia"; \
+	echo "  collateral : $(COLL)"; \
+	echo "  debt asset : $(DEBT)"; \
+	echo "  user       : $(USER)"; \
+	echo "  repay amt  : $(REPAY)"; \
+	echo "  recv aTok? : $$RA"; \
+	set -a; [ -f .env ] && . ./.env; set +a; \
+	forge script $(LIQ_SCRIPT) \
+		--sig "liquidate(address,address,address,uint256,bool)" $(COLL) $(DEBT) $(USER) $(REPAY) $$RA \
 		--rpc-url $(SEPOLIA_RPC_URL) \
 		--private-key $(DEPLOYER_PRIVATE_KEY) \
 		--broadcast \
