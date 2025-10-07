@@ -10,10 +10,12 @@ import { AaveV3Sepolia, AaveV3SepoliaAssets } from "../../src/aave-v3-yield-stra
 import { IPool, IAaveOracle } from "../../src/aave-v3-yield-strategies/interfaces/IAaveV3.sol";
 import { IAaveProtocolDataProvider } from "../../src/aave-v3-yield-strategies/interfaces/IAaveProtocolDataProvider.sol";
 
+import { EnvUtils } from "../utils/EnvUtils.s.sol";
+
 /// @title LiquidationPlayground (Aave V3 - Sepolia)
 /// @notice Test/ops helper to (1) simulate liquidation math, (2) create a risky position (testing),
 ///         and (3) execute liquidation via IPool.liquidationCall. For forks/testnets only.
-contract LiquidationPlayground is Script {
+contract LiquidationPlayground is Script, EnvUtils {
     // ---------- Wiring ----------
     IPool constant POOL = IPool(AaveV3Sepolia.POOL);
     IAaveOracle constant ORACLE = IAaveOracle(AaveV3Sepolia.ORACLE);
@@ -263,17 +265,5 @@ contract LiquidationPlayground is Script {
             isActive_,
             isFrozen_
         ) = DATA.getReserveConfigurationData(asset);
-    }
-
-    function _eq(string memory a, string memory b) internal pure returns (bool) {
-        return keccak256(bytes(a)) == keccak256(bytes(b));
-    }
-
-    function _envUintOr(string memory key, uint256 def) internal view returns (uint256 out) {
-        try vm.envUint(key) returns (uint256 v) {
-            return v;
-        } catch {
-            return def;
-        }
     }
 }

@@ -8,6 +8,8 @@ import { DevOpsTools } from "lib/foundry-devops/src/DevOpsTools.sol";
 import { AaveV3MultiAssetStrategy } from "../../src/aave-v3-yield-strategies/AaveV3MultiAssetStrategy.sol";
 import { AaveV3Sepolia, AaveV3SepoliaAssets } from "../../src/aave-v3-yield-strategies/libs/AaveV3Sepolia.sol";
 
+import { EnvUtils } from "../utils/EnvUtils.s.sol";
+
 /// @dev Aave Sepolia faucet:
 ///      0xC959483DBa39aa9E78757139af0e9a2EDEb3f42D
 interface IAaveFaucet {
@@ -15,7 +17,7 @@ interface IAaveFaucet {
     function mint(address token, address to, uint256 amount) external returns (uint256);
 }
 
-contract ExecuteAaveV3FaucetAndSupplyScript is Script {
+contract ExecuteAaveV3FaucetAndSupplyScript is Script, EnvUtils {
     // ---------- Wiring ----------
     IAaveFaucet constant FAUCET = IAaveFaucet(address(AaveV3Sepolia.FAUCET));
 
@@ -320,13 +322,5 @@ contract ExecuteAaveV3FaucetAndSupplyScript is Script {
         } catch { }
         strategy = DevOpsTools.get_most_recent_deployment("AaveV3MultiAssetStrategy", block.chainid);
         require(strategy != address(0), "strategy not found; set STRATEGY env");
-    }
-
-    function _envUintOrDefault(string memory key, uint256 def) internal view returns (uint256 out) {
-        try vm.envUint(key) returns (uint256 v) {
-            return v;
-        } catch {
-            return def;
-        }
     }
 }

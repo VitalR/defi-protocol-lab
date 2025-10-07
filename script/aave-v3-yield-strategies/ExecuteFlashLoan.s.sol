@@ -5,9 +5,10 @@ import "forge-std/Script.sol";
 import { DevOpsTools } from "lib/foundry-devops/src/DevOpsTools.sol";
 import { FlashLoanExecutor } from "../../src/aave-v3-yield-strategies/FlashLoanExecutor.sol";
 import { AaveV3Sepolia } from "../../src/aave-v3-yield-strategies/libs/AaveV3Sepolia.sol";
+import { EnvUtils } from "../utils/EnvUtils.s.sol";
 
 /// @notice Drives a flash loan on Sepolia. If TARGET+DATA are omitted, it performs a no-op.
-contract ExecuteFlashLoanScript is Script {
+contract ExecuteFlashLoanScript is Script, EnvUtils {
     function run() external {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         vm.startBroadcast(pk);
@@ -44,38 +45,5 @@ contract ExecuteFlashLoanScript is Script {
         console2.log("  target   :", target);
         console2.log("  approveT :", approveTgt);
         console2.log("  referral :", referral);
-    }
-
-    // ---------- helpers ----------
-    function _envUintOr(string memory key, uint256 def) internal view returns (uint256 out) {
-        try vm.envUint(key) returns (uint256 v) {
-            return v;
-        } catch {
-            return def;
-        }
-    }
-
-    function _envAddrOrZero(string memory key) internal view returns (address out) {
-        try vm.envAddress(key) returns (address v) {
-            return v;
-        } catch {
-            return address(0);
-        }
-    }
-
-    function _envBytesOrEmpty(string memory key) internal view returns (bytes memory out) {
-        try vm.envBytes(key) returns (bytes memory v) {
-            return v;
-        } catch {
-            return bytes("");
-        }
-    }
-
-    function _envBoolOr(string memory key, bool def) internal view returns (bool out) {
-        try vm.envBool(key) returns (bool v) {
-            return v;
-        } catch {
-            return def;
-        }
     }
 }

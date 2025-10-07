@@ -7,6 +7,8 @@ import { DevOpsTools } from "lib/foundry-devops/src/DevOpsTools.sol";
 import { AaveV3Sepolia, AaveV3SepoliaAssets } from "../../src/aave-v3-yield-strategies/libs/AaveV3Sepolia.sol";
 import { AaveV3MultiAssetStrategy } from "../../src/aave-v3-yield-strategies/AaveV3MultiAssetStrategy.sol";
 
+import { EnvUtils } from "../utils/EnvUtils.s.sol";
+
 /// @title DeployAaveV3MultiAssetStrategy
 /// @notice Deploys `AaveV3MultiAssetStrategy` on Ethereum Sepolia and writes a compact JSON report.
 /// @dev
@@ -14,7 +16,7 @@ import { AaveV3MultiAssetStrategy } from "../../src/aave-v3-yield-strategies/Aav
 ///   - SEPOLIA_RPC
 ///   - DEPLOYER_PRIVATE_KEY
 /// Optionally override allowlists by editing the arrays below.
-contract DeployAaveV3MultiAssetStrategyScript is Script {
+contract DeployAaveV3MultiAssetStrategyScript is Script, EnvUtils {
     function run() external {
         // --- Load deployer ---
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -92,30 +94,30 @@ contract DeployAaveV3MultiAssetStrategyScript is Script {
         // console2.log("Most recent (DevOpsTools):", mostRecent);
     }
 
-    /// @dev Utility to JSON-encode an array of addresses → ["0x..","0x.."]
-    function _addressesToJsonArray(address[] memory arr) internal pure returns (string memory) {
-        bytes memory out = bytes("[");
-        for (uint256 i = 0; i < arr.length; ++i) {
-            out = abi.encodePacked(out, "\"", _toHexString(arr[i]), "\"");
-            if (i + 1 < arr.length) {
-                out = abi.encodePacked(out, ",");
-            }
-        }
-        out = abi.encodePacked(out, "]");
-        return string(out);
-    }
+    // /// @dev Utility to JSON-encode an array of addresses → ["0x..","0x.."]
+    // function _addressesToJsonArray(address[] memory arr) internal pure returns (string memory) {
+    //     bytes memory out = bytes("[");
+    //     for (uint256 i = 0; i < arr.length; ++i) {
+    //         out = abi.encodePacked(out, "\"", _toHexString(arr[i]), "\"");
+    //         if (i + 1 < arr.length) {
+    //             out = abi.encodePacked(out, ",");
+    //         }
+    //     }
+    //     out = abi.encodePacked(out, "]");
+    //     return string(out);
+    // }
 
-    /// @dev Address → 0x-prefixed hex string
-    function _toHexString(address a) internal pure returns (string memory) {
-        bytes20 data = bytes20(a);
-        bytes memory hexChars = "0123456789abcdef";
-        bytes memory str = new bytes(42);
-        str[0] = "0";
-        str[1] = "x";
-        for (uint256 i = 0; i < 20; i++) {
-            str[2 + i * 2] = hexChars[uint8(data[i] >> 4)];
-            str[3 + i * 2] = hexChars[uint8(data[i] & 0x0f)];
-        }
-        return string(str);
-    }
+    // /// @dev Address → 0x-prefixed hex string
+    // function _toHexString(address a) internal pure returns (string memory) {
+    //     bytes20 data = bytes20(a);
+    //     bytes memory hexChars = "0123456789abcdef";
+    //     bytes memory str = new bytes(42);
+    //     str[0] = "0";
+    //     str[1] = "x";
+    //     for (uint256 i = 0; i < 20; i++) {
+    //         str[2 + i * 2] = hexChars[uint8(data[i] >> 4)];
+    //         str[3 + i * 2] = hexChars[uint8(data[i] & 0x0f)];
+    //     }
+    //     return string(str);
+    // }
 }
