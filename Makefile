@@ -17,7 +17,8 @@
 	exec-borrow-token \
 	exec-simulate-liq \
 	exec-create-risky \
-	exec-liquidate
+	exec-liquidate \
+	exec-flashloan
 
 # ------------- Chain config (Ethereum Sepolia) -------------
 
@@ -35,6 +36,7 @@ CONTRACT_NAME    := AaveV3MultiAssetStrategy
 DEPLOY_SCRIPT    := script/aave-v3-yield-strategies/DeployAaveV3MultiAssetStrategy.s.sol
 EXEC_SCRIPT      := script/aave-v3-yield-strategies/ExecuteAaveV3FaucetAndSupply.s.sol
 LIQ_SCRIPT 		 := script/aave-v3-yield-strategies/LiquidationPlayground.s.sol
+FLASH_SCRIPT     := script/aave-v3-yield-strategies/ExecuteFlashLoan.s.sol
 
 # Deploy report paths (for optional extensions)
 REPORT_DIR       ?= reports
@@ -279,3 +281,16 @@ exec-liquidate:
 		--private-key $(DEPLOYER_PRIVATE_KEY) \
 		--broadcast \
 		-vvvv
+
+# ------------- Flash Loan -------------
+## Deploy or re-use FlashLoanExecutor via the script (auto deploy if FLASH_EXECUTOR unset)
+## Env (example):
+##   FLASH_ASSET=0x...   FLASH_AMOUNT=1000000   FEE_PAYER=0xYourEOA
+##   [optional] FLASH_TARGET=0x... FLASH_DATA=0x... FLASH_APPROVE_TARGET=1
+exec-flashloan:
+	@echo "Executing flash loan on Sepolia"
+	@set -a; [ -f .env ] && . ./.env; set +a; \
+	forge script $(FLASH_SCRIPT) \
+		--rpc-url $(SEPOLIA_RPC_URL) \
+		--private-key $(DEPLOYER_PRIVATE_KEY) \
+		--broadcast -vvvv

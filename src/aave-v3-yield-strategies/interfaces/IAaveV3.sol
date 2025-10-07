@@ -75,6 +75,21 @@ interface IPool {
             uint256 ltv,
             uint256 healthFactor
         );
+
+    /// @notice Initiates a simple flash loan and calls `executeOperation` on the receiver.
+    /// @param receiverAddress The contract receiving the flash-borrowed amount (must implement
+    /// IFlashLoanSimpleReceiver).
+    /// @param asset           Address of the asset to be flash-borrowed.
+    /// @param amount          Amount to borrow (base units).
+    /// @param params          Opaque bytes forwarded to `executeOperation`.
+    /// @param referralCode    Optional referral code (0 if unused).
+    function flashLoanSimple(
+        address receiverAddress,
+        address asset,
+        uint256 amount,
+        bytes calldata params,
+        uint16 referralCode
+    ) external;
 }
 
 interface IPoolAddressesProvider {
