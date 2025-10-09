@@ -5,10 +5,10 @@ import "forge-std/Script.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { DevOpsTools } from "lib/foundry-devops/src/DevOpsTools.sol";
 
-import { AaveV3MultiAssetStrategy } from "../../src/aave-v3-yield-strategies/AaveV3MultiAssetStrategy.sol";
-import { AaveV3Sepolia, AaveV3SepoliaAssets } from "../../src/aave-v3-yield-strategies/libs/AaveV3Sepolia.sol";
+import { AaveV3MultiAssetStrategy } from "src/aave-v3-yield-strategies/AaveV3MultiAssetStrategy.sol";
+import { AaveV3Sepolia, AaveV3SepoliaAssets } from "src/aave-v3-yield-strategies/libs/AaveV3Sepolia.sol";
 
-import { EnvUtils } from "../utils/EnvUtils.s.sol";
+import { EnvUtils } from "./utils/EnvUtils.s.sol";
 
 /// @dev Aave Sepolia faucet:
 ///      0xC959483DBa39aa9E78757139af0e9a2EDEb3f42D

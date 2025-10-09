@@ -6,11 +6,11 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 
-import { AaveV3Sepolia, AaveV3SepoliaAssets } from "../../src/aave-v3-yield-strategies/libs/AaveV3Sepolia.sol";
-import { IPool, IAaveOracle } from "../../src/aave-v3-yield-strategies/interfaces/IAaveV3.sol";
-import { IAaveProtocolDataProvider } from "../../src/aave-v3-yield-strategies/interfaces/IAaveProtocolDataProvider.sol";
+import { AaveV3Sepolia, AaveV3SepoliaAssets } from "src/aave-v3-yield-strategies/libs/AaveV3Sepolia.sol";
+import { IPool, IAaveOracle } from "src/aave-v3-yield-strategies/interfaces/IAaveV3.sol";
+import { IAaveProtocolDataProvider } from "src/aave-v3-yield-strategies/interfaces/IAaveProtocolDataProvider.sol";
 
-import { EnvUtils } from "../utils/EnvUtils.s.sol";
+import { EnvUtils } from "./utils/EnvUtils.s.sol";
 
 /// @title LiquidationPlayground (Aave V3 - Sepolia)
 /// @notice Test/ops helper to (1) simulate liquidation math, (2) create a risky position (testing),

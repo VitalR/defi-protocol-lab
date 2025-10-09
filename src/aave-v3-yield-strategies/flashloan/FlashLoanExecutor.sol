@@ -2,8 +2,8 @@
 pragma solidity 0.8.30;
 
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import { IFlashLoanSimpleReceiver } from "./interfaces/IFlashLoanSimpleReceiver.sol";
-import { IPool, IPoolAddressesProvider } from "./interfaces/IAaveV3.sol";
+import { IFlashLoanSimpleReceiver } from "../interfaces/IFlashLoanSimpleReceiver.sol";
+import { IPool, IPoolAddressesProvider } from "../interfaces/IAaveV3.sol";
 
 /// @title FlashLoanExecutor (Aave V3 — Simple Flash Loan)
 /// @notice Lightweight helper to initiate + settle an Aave V3 *simple* flash loan,

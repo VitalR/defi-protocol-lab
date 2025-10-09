@@ -36,7 +36,7 @@ CONTRACT_NAME    := AaveV3MultiAssetStrategy
 DEPLOY_SCRIPT    := script/aave-v3-yield-strategies/DeployAaveV3MultiAssetStrategy.s.sol
 EXEC_SCRIPT      := script/aave-v3-yield-strategies/ExecuteAaveV3FaucetAndSupply.s.sol
 LIQ_SCRIPT 		 := script/aave-v3-yield-strategies/LiquidationPlayground.s.sol
-FLASH_SCRIPT     := script/aave-v3-yield-strategies/ExecuteFlashLoan.s.sol
+FLASH_SCRIPT     := script/aave-v3-yield-strategies/flashloan/ExecuteFlashLoan.s.sol
 
 # Deploy report paths (for optional extensions)
 REPORT_DIR       ?= reports

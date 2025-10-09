@@ -4,10 +4,10 @@ pragma solidity 0.8.30;
 import "forge-std/Script.sol";
 import { DevOpsTools } from "lib/foundry-devops/src/DevOpsTools.sol";
 
-import { AaveV3Sepolia, AaveV3SepoliaAssets } from "../../src/aave-v3-yield-strategies/libs/AaveV3Sepolia.sol";
-import { AaveV3MultiAssetStrategy } from "../../src/aave-v3-yield-strategies/AaveV3MultiAssetStrategy.sol";
+import { AaveV3Sepolia, AaveV3SepoliaAssets } from "src/aave-v3-yield-strategies/libs/AaveV3Sepolia.sol";
+import { AaveV3MultiAssetStrategy } from "src/aave-v3-yield-strategies/AaveV3MultiAssetStrategy.sol";
 
-import { EnvUtils } from "../utils/EnvUtils.s.sol";
+import { EnvUtils } from "./utils/EnvUtils.s.sol";
 
 /// @title DeployAaveV3MultiAssetStrategy
 /// @notice Deploys `AaveV3MultiAssetStrategy` on Ethereum Sepolia and writes a compact JSON report.

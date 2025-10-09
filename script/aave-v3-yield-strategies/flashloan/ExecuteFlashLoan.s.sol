@@ -3,8 +3,8 @@ pragma solidity 0.8.30;
 
 import "forge-std/Script.sol";
 import { DevOpsTools } from "lib/foundry-devops/src/DevOpsTools.sol";
-import { FlashLoanExecutor } from "../../src/aave-v3-yield-strategies/FlashLoanExecutor.sol";
-import { AaveV3Sepolia } from "../../src/aave-v3-yield-strategies/libs/AaveV3Sepolia.sol";
+import { FlashLoanExecutor } from "src/aave-v3-yield-strategies/flashloan/FlashLoanExecutor.sol";
+import { AaveV3Sepolia } from "src/aave-v3-yield-strategies/libs/AaveV3Sepolia.sol";
 import { EnvUtils } from "../utils/EnvUtils.s.sol";
 
 /// @notice Drives a flash loan on Sepolia. If TARGET+DATA are omitted, it performs a no-op.
