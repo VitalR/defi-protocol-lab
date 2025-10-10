@@ -294,3 +294,71 @@ exec-flashloan:
 		--rpc-url $(SEPOLIA_RPC_URL) \
 		--private-key $(DEPLOYER_PRIVATE_KEY) \
 		--broadcast -vvvv
+
+
+# ----------------- Leverage (Arbitrum/OP mainnet friendly) -----------------
+
+# Required:
+#   DEPLOYER_PRIVATE_KEY
+#   RPC_URL              (e.g. Arbitrum/OP mainnet)
+#   POOL                 (Aave v3 Pool)
+#   AAVE_DATA_PROVIDER   (Aave v3 ProtocolDataProvider)
+#   UNISWAP_V3_ROUTER    (Uniswap V3 periphery router)
+# Optional:
+#   MANAGER              (if already deployed)
+#   WETH_TOKEN, USDC_TOKEN, WBTC_TOKEN, LINK_TOKEN (or pass via CLI)
+
+EXEC_LEV_SCRIPT := script/leveraged/ExecuteLeveragePositions.s.sol:ExecuteLeveragePositions
+
+# Deploy LeveragePositionManager
+deploy-lev:
+	@echo "Deploying LeveragePositionManager to $(RPC_URL)"
+	@[ -n "$(DEPLOYER_PRIVATE_KEY)" ] || (echo "Missing DEPLOYER_PRIVATE_KEY"; exit 1)
+	@[ -n "$(POOL)" ] || (echo "Missing POOL"; exit 1)
+	@[ -n "$(AAVE_DATA_PROVIDER)" ] || (echo "Missing AAVE_DATA_PROVIDER"; exit 1)
+	@[ -n "$(UNISWAP_V3_ROUTER)" ] || (echo "Missing UNISWAP_V3_ROUTER"; exit 1)
+	forge script $(EXEC_LEV_SCRIPT) \
+		--sig "deployManager()" \
+		--rpc-url $(RPC_URL) \
+		--private-key $(DEPLOYER_PRIVATE_KEY) \
+		--broadcast -vvv
+
+# Open a leveraged position (generic; use for long/short)
+# Example (leveraged long WETH with USDC):
+#   make exec-open \
+#     COLL=$(WETH_TOKEN) COLL_AMT=100000000000000000 \
+#     DEBT=$(USDC_TOKEN) DEBT_AMT=100000000 \
+#     UNI_FEE=500 MIN_OUT=1 DEADLINE=$$(( $$(date +%s) + 900 )) MIN_HF=1100000000000000000 RESUPPLY=1
+exec-open:
+	@[ -n "$(COLL)" ] && [ -n "$(COLL_AMT)" ] && [ -n "$(DEBT)" ] && [ -n "$(DEBT_AMT)" ] || (echo "Usage: make exec-open COLL=0x... COLL_AMT=<wei> DEBT=0x... DEBT_AMT=<units> UNI_FEE=<500|3000|10000> MIN_OUT=<uint> DEADLINE=<unix> MIN_HF=<wad> [RESUPPLY=0|1] [REF=0]"; exit 1)
+	@REF=$${REF:-0}; RESUPPLY=$${RESUPPLY:-0}; \
+	echo "Opening position: COLL=$(COLL) AMT=$(COLL_AMT) | BORROW=$(DEBT) AMT=$(DEBT_AMT) FEE=$(UNI_FEE) RESUPPLY=$$RESUPPLY"; \
+	set -a; [ -f .env ] && . ./.env; set +a; \
+	forge script $(EXEC_LEV_SCRIPT) \
+		--sig "openPosition(address,address,uint256,address,uint256,uint16,uint24,uint256,uint256,uint256,bool)" \
+		$${MANAGER:-0x0000000000000000000000000000000000000000} \
+		$(COLL) $(COLL_AMT) $(DEBT) $(DEBT_AMT) $$REF $(UNI_FEE) $(MIN_OUT) $(DEADLINE) $(MIN_HF) $$RESUPPLY \
+		--rpc-url $(RPC_URL) \
+		--private-key $(DEPLOYER_PRIVATE_KEY) \
+		--broadcast -vvv
+
+# Close a leveraged position
+# Example:
+#   make exec-close COLL=$(WETH_TOKEN) DEBT=$(USDC_TOKEN) ATOK_PULL=115792089237316195423570985008687907853269984665640564039457584007913129639935 WITHDRAW=11579208... UNI_FEE=500 MIN_OUT=1 DEADLINE=$$(( $$(date +%s)+900 )) MAX_REPAY=340000000
+exec-close:
+	@[ -n "$(COLL)" ] && [ -n "$(DEBT)" ] && [ -n "$(ATOK_PULL)" ] && [ -n "$(WITHDRAW)" ] && [ -n "$(UNI_FEE)" ] && [ -n "$(MIN_OUT)" ] && [ -n "$(DEADLINE)" ] && [ -n "$(MAX_REPAY)" ] || (echo "Usage: make exec-close COLL=0x... DEBT=0x... ATOK_PULL=<amt or MAX> WITHDRAW=<amt or MAX> UNI_FEE=<500|3000|10000> MIN_OUT=<uint> DEADLINE=<unix> MAX_REPAY=<uint>"; exit 1)
+	@set -a; [ -f .env ] && . ./.env; set +a; \
+	forge script $(EXEC_LEV_SCRIPT) \
+		--sig "closePosition(address,address,address,uint256,uint256,uint24,uint256,uint256,uint256)" \
+		$${MANAGER:-0x0000000000000000000000000000000000000000} \
+		$(COLL) $(DEBT) $(ATOK_PULL) $(WITHDRAW) $(UNI_FEE) $(MIN_OUT) $(DEADLINE) $(MAX_REPAY) \
+		--rpc-url $(RPC_URL) \
+		--private-key $(DEPLOYER_PRIVATE_KEY) \
+		--broadcast -vvv
+
+# Close the position fully
+# MAX=115792089237316195423570985008687907853269984665640564039457584007913129639935
+# make exec-close \
+#   COLL=$(WETH_TOKEN) DEBT=$(USDC_TOKEN) \
+#   ATOK_PULL=$MAX WITHDRAW=$MAX \
+#   UNI_FEE=500 MIN_OUT=1 DEADLINE=$(( $(date +%s)+900 )) MAX_REPAY=$MAX
