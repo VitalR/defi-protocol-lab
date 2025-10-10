@@ -18,7 +18,8 @@
 	exec-simulate-liq \
 	exec-create-risky \
 	exec-liquidate \
-	exec-flashloan
+	exec-flashloan \
+	exec-open-long exec-open-short exec-close
 
 # ------------- Chain config (Ethereum Sepolia) -------------
 
@@ -362,3 +363,57 @@ exec-close:
 #   COLL=$(WETH_TOKEN) DEBT=$(USDC_TOKEN) \
 #   ATOK_PULL=$MAX WITHDRAW=$MAX \
 #   UNI_FEE=500 MIN_OUT=1 DEADLINE=$(( $(date +%s)+900 )) MAX_REPAY=$MAX
+
+
+# Common defaults (override at call-time if you like)
+# amounts are in base units (WETH 18, USDC 6, WBTC 8)
+DEFAULT_COLL_AMOUNT ?= 1000000000000000000    # 1 WETH
+DEFAULT_BORROW_AMOUNT_LONG ?= 1000000          # 1 USDC (example only; adjust)
+DEFAULT_BORROW_AMOUNT_SHORT ?= 10000000        # 0.1 WBTC (8 decimals -> 10,000,000)
+DEFAULT_UNI_FEE ?= 3000                        # 0.3% pool
+DEFAULT_MIN_OUT ?= 0                           # protect with real slippage for prod
+DEFAULT_DEADLINE ?= 0                          # 0 => router will use block.timestamp in wrapper
+DEFAULT_MIN_HF ?= 1200000000000000000          # 1.20
+DEFAULT_RESUPPLY ?= 1                          # 1=true, re-supply swapped collateral
+
+## Open a *long* on WETH using USDC borrow:
+## Supply WETH, borrow USDC, swap USDC->WETH (optionally re-supply).
+## Usage:
+##   make exec-open-long [COLL_AMOUNT=...] [BORROW_AMOUNT=...] [UNI_FEE=3000] [MIN_OUT=0] [DEADLINE=0] [MIN_HF=1.2e18] [RESUPPLY=1]
+exec-open-long:
+	@echo "Opening LONG: collateral=WETH borrow=USDC on Sepolia"
+	@set -a; [ -f .env ] && . ./.env; set +a; \
+	COLL=$${COLL_AMOUNT:-$(DEFAULT_COLL_AMOUNT)}; \
+	BORR=$${BORROW_AMOUNT:-$(DEFAULT_BORROW_AMOUNT_LONG)}; \
+	FEE=$${UNI_FEE:-$(DEFAULT_UNI_FEE)}; \
+	MINO=$${MIN_OUT:-$(DEFAULT_MIN_OUT)}; \
+	DL=$${DEADLINE:-$(DEFAULT_DEADLINE)}; \
+	MHF=$${MIN_HF:-$(DEFAULT_MIN_HF)}; \
+	RS=$${RESUPPLY:-$(DEFAULT_RESUPPLY)}; \
+	forge script $(LEVERAGE_SCRIPT) \
+		--sig "openLong(address,address,uint256,uint256,uint24,uint256,uint256,uint256,bool)" \
+		$(WETH_TOKEN) $(USDC_TOKEN) $$COLL $$BORR $$FEE $$MINO $$DL $$MHF $$RS \
+		--rpc-url $${SEPOLIA_RPC_URL} \
+		--private-key $${DEPLOYER_PRIVATE_KEY} \
+		--broadcast -vvvv
+
+## Open a *short* on WBTC collateralized by WETH:
+## Supply WETH, borrow WBTC, swap WBTC->WETH (optionally re-supply).
+## Usage:
+##   make exec-open-short [COLL_AMOUNT=...] [BORROW_AMOUNT=...] [UNI_FEE=3000] [MIN_OUT=0] [DEADLINE=0] [MIN_HF=1.2e18] [RESUPPLY=1]
+exec-open-short:
+	@echo "Opening SHORT: collateral=WETH borrow=WBTC on Sepolia"
+	@set -a; [ -f .env ] && . ./.env; set +a; \
+	COLL=$${COLL_AMOUNT:-$(DEFAULT_COLL_AMOUNT)}; \
+	BORR=$${BORROW_AMOUNT:-$(DEFAULT_BORROW_AMOUNT_SHORT)}; \
+	FEE=$${UNI_FEE:-$(DEFAULT_UNI_FEE)}; \
+	MINO=$${MIN_OUT:-$(DEFAULT_MIN_OUT)}; \
+	DL=$${DEADLINE:-$(DEFAULT_DEADLINE)}; \
+	MHF=$${MIN_HF:-$(DEFAULT_MIN_HF)}; \
+	RS=$${RESUPPLY:-$(DEFAULT_RESUPPLY)}; \
+	forge script $(LEVERAGE_SCRIPT) \
+		--sig "openShort(address,address,uint256,uint256,uint24,uint256,uint256,uint256,bool)" \
+		$(WETH_TOKEN) $(WBTC_TOKEN) $$COLL $$BORR $$FEE $$MINO $$DL $$MHF $$RS \
+		--rpc-url $${SEPOLIA_RPC_URL} \
+		--private-key $${DEPLOYER_PRIVATE_KEY} \
+		--broadcast -vvvv
