@@ -1,66 +1,33 @@
-## Foundry
+## DeFi-LEGO
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+**Modular Framework for Composable Yield & Leverage Strategies**
 
-Foundry consists of:
 
--   **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
--   **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
--   **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+## Overview
 
-## Documentation
+DeFi-LEGO is an evolving on-chain framework for designing, testing, and deploying modular DeFi strategies.
+It currently integrates Aave V3 and Uniswap V3, with upcoming support for additional lending and liquidity protocols.
 
-https://book.getfoundry.sh/
+Each module acts as a self-contained “building block” — enabling developers to experiment with leveraged positions, flash loans, liquidation mechanics, and cross-protocol yield flows.
 
-## Usage
 
-### Build
+## Current Modules
+- AaveV3MultiAssetStrategy — Base multi-asset supply/borrow strategy.
+- LeveragePositionManager — Opens and closes leveraged long/short positions via Aave V3 + Uniswap V3.
+- FlashLoanExecutor — Minimal flash-loan receiver for arbitrage or deleveraging.
+- LiquidationPlayground — Sandbox for liquidation simulations and testing.
+- TokenActions — Safe ERC-20 helper library for transfers and approvals.
 
-```shell
-$ forge build
-```
 
-### Test
+### Scripts
+- Foundry scripts mirror live DeFi flows such as:
+- Supplying assets and borrowing collateral.
+- Opening or closing leveraged positions.
+- Simulating liquidation and repayment scenarios.
+- Executing flash-loan and rebalancing operations.                                  |
 
-```shell
-$ forge test
-```
+<hr>
 
-### Format
-
-```shell
-$ forge fmt
-```
-
-### Gas Snapshots
-
-```shell
-$ forge snapshot
-```
-
-### Anvil
-
-```shell
-$ anvil
-```
-
-### Deploy
-
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
-
-### Cast
-
-```shell
-$ cast <subcommand>
-```
-
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
-```
+### Vision
+DeFi-LEGO aims to become a protocol-agnostic toolkit for building secure, modular DeFi infrastructure —
+from strategy orchestration to multi-protocol leverage and cross-chain automation.
