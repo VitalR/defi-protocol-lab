@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.30;
+pragma solidity 0.8.35;
 
 /// @title AaveV3Sepolia (vendored)
 /// @notice Minimal, self-contained constants for Aave V3 Sepolia market.

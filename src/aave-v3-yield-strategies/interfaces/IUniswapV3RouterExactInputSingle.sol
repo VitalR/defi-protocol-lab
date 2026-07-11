@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.30;
+pragma solidity 0.8.35;
 
 /// @title IUniswapV3RouterExactInputSingle (Uniswap V3)
 /// @notice Interface for the Uniswap V3 router's exactInputSingle function.

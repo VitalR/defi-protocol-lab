@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.30;
+pragma solidity 0.8.35;
 
 import { AccessControl } from "@openzeppelin/contracts/access/AccessControl.sol";
 import { EnumerableSet } from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
@@ -504,11 +504,7 @@ contract AaveV3MultiAssetStrategy is AccessControl, Pausable, ReentrancyGuard {
     /// @param _asset The debt asset to quote for.
     /// @param _bufferBps Basis points to shave off (0–10_000).
     /// @return safeMaxToken The buffered max amount (token base units).
-    function approxMaxBorrowWithBuffer(address _asset, uint16 _bufferBps)
-        external
-        view
-        returns (uint256 safeMaxToken)
-    {
+    function approxMaxBorrowWithBuffer(address _asset, uint16 _bufferBps) external view returns (uint256 safeMaxToken) {
         uint256 raw = approxMaxBorrow(_asset);
         if (_bufferBps == 0 || raw == 0) return raw;
         require(_bufferBps <= 10_000, BUFFER_BPS_TOO_HIGH());

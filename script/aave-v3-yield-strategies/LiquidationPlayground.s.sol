@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.30;
+pragma solidity 0.8.35;
 
 import "forge-std/Script.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -254,14 +254,10 @@ contract LiquidationPlayground is Script, EnvUtils {
         )
     {
         (
-            decimals_,
-            , // ltv (unused)
+            decimals_,, // ltv (unused)
             liqThresholdBps_,
-            liqBonusBps_,
-            , // reserveFactor (unused)
-            , // usageAsCollateralEnabled (unused)
-            borrowingEnabled_,
-            , // stableBorrowRateEnabled (unused)
+            liqBonusBps_,, // reserveFactor (unused), // usageAsCollateralEnabled (unused)
+            borrowingEnabled_,, // stableBorrowRateEnabled (unused)
             isActive_,
             isFrozen_
         ) = DATA.getReserveConfigurationData(asset);

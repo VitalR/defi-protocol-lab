@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.30;
+pragma solidity 0.8.35;
 
 /// @title IAaveProtocolDataProvider (extended minimal)
 /// @notice Minimal surface of Aave V3 ProtocolDataProvider used by our strategy + liquidation playground.

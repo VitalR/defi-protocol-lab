@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.30;
+pragma solidity 0.8.35;
 
 import "forge-std/Script.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -60,7 +60,7 @@ contract ExecuteLeveragePositions is Script {
             deadline: block.timestamp + 1800,
             minHealthFactor: 12e17, // >=1.2
             resupplySwapped: true // re-supply swapped WBTC back to user’s Aave position
-         });
+        });
 
         // Make sure this EOA has enough collateral & debt token approvals if needed by your flow
         // For demo, we assume wallet already holds the collateral and will receive borrowed tokens to then be swapped.
@@ -95,7 +95,7 @@ contract ExecuteLeveragePositions is Script {
             minOut: 0, // demo only
             deadline: block.timestamp + 1800,
             maxDebtToRepay: 0 // repay full current variable debt
-         });
+        });
 
         // Approve manager to pull aTokens from user
         address aTok = mgr._aTokenOf(p.collateralToken);

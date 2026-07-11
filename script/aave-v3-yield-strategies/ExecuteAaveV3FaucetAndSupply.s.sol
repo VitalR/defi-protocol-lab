@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.30;
+pragma solidity 0.8.35;
 
 import "forge-std/Script.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -43,8 +43,8 @@ contract ExecuteAaveV3FaucetAndSupplyScript is Script, EnvUtils {
         // mintAll();
         // Example: supply 1 WBTC and set as collateral
         supplyToken(WBTC, 1e8, 0, true); // 1 WBTC (8 decimals)
-            // borrowToken(WBTC, 0);
-            // repayAllDebt(WBTC);
+        // borrowToken(WBTC, 0);
+        // repayAllDebt(WBTC);
     }
 
     // ---------- Entry 1: Mint from Aave Faucet ----------

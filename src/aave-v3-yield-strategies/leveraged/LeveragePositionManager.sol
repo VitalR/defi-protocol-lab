@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.30;
+pragma solidity 0.8.35;
 
 import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -7,8 +7,9 @@ import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 
 import { IPool } from "src/aave-v3-yield-strategies/interfaces/IAaveV3.sol";
 import { IAaveProtocolDataProvider } from "src/aave-v3-yield-strategies/interfaces/IAaveProtocolDataProvider.sol";
-import { IUniswapV3RouterExactInputSingle } from
-    "src/aave-v3-yield-strategies/interfaces/IUniswapV3RouterExactInputSingle.sol";
+import {
+    IUniswapV3RouterExactInputSingle
+} from "src/aave-v3-yield-strategies/interfaces/IUniswapV3RouterExactInputSingle.sol";
 import { TokenActions } from "src/aave-v3-yield-strategies/libs/TokenActions.sol";
 
 /// @title LeveragePositionManager (Aave V3 + Uniswap V3)
@@ -218,7 +219,8 @@ contract LeveragePositionManager is ReentrancyGuard {
     }
 
     /// @notice Close part/all of a leveraged position by withdrawing collateral, swapping to debt, and repaying.
-    /// @dev Pulls aTokens from the user, withdraws underlying to this contract, swaps collateral→debt, repays user’s
+    /// @dev Pulls aTokens from the user, withdraws underlying to this contract, swaps collateral→debt, repays
+    /// user’s
     ///      variable debt (topping up from user if needed), then forwards any leftover debt tokens to the user.
     /// @param p The {CloseParams} payload describing assets, amounts and swap details.
     /// @return collateralWithdrawn Amount of collateral withdrawn from Aave.
@@ -315,7 +317,8 @@ contract LeveragePositionManager is ReentrancyGuard {
         if (amountOut == 0) revert SWAP_FAILED();
     }
 
-    /// @notice Repay user’s variable-rate debt using swap output, topping up from user if capped amount exceeds output.
+    /// @notice Repay user’s variable-rate debt using swap output, topping up from user if capped amount exceeds
+    /// output.
     /// @dev Caps repayment by `maxDebtToRepay` (0 => repay full current variable debt).
     /// @param borrowToken Debt token to repay.
     /// @param swappedAmount Amount of `borrowToken` available from the swap.
