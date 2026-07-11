@@ -21,9 +21,8 @@ remappings = [
 
 # foundry-devops
 fs_permissions = [
-    { access = "read", path = "./broadcast" },
-    { access = "read", path = "./reports" },
-    { access = "write", path = "./reports" }
+  { access = "read", path = "./broadcast" },
+  { access = "read-write", path = "./deployment" },
 ]
 
 [fmt]
