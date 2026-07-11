@@ -8,10 +8,9 @@ ast = true
 build_info = true
 extra_output = ["storageLayout", "metadata", "evm.deployedBytecode.object"]
 
-solc = "0.8.30"
+solc = "0.8.35"
 optimizer = true
 optimizer_runs = 10000
-coverage = true
 
 remappings = [
     "@forge-std/=lib/forge-std/src/",
@@ -28,6 +27,7 @@ fs_permissions = [
 ]
 
 [fmt]
+ignore=["lib/**"]
 tab_width = 4
 line_length = 120
 bracket_spacing = true

@@ -5,7 +5,9 @@
 
 # Node artifact files
 node_modules/
+.next/
 dist/
+*.tsbuildinfo
 
 # Compiled Java class files
 *.class
@@ -23,11 +25,10 @@ dist/
 target/
 dist/
 
-# JetBrains IDE
+# IDEs
 .idea/
-
-# vscode
 .vscode/
+.cursor/
 
 # Unit test reports
 TEST*.xml
@@ -51,6 +52,10 @@ Thumbs.db
 *.mov
 *.wmv
 
+# Ignore virtual environments
+venv/
+.venv/
+
 # Hardhat files
 cache_hardhat
 artifacts
@@ -63,20 +68,24 @@ typechain-types
 # Compiler files
 cache/
 out/
-zkout/
 
 # Ignores development broadcast logs
-!/broadcast
-/broadcast/*/31337/
-/broadcast/**/dry-run/
 broadcast/
 
-# Dotenv file
+# Dotenv files
 .env
-.env.fork
-.env.testnet
+.env.*
+!.env.example
+
+# Coverage file
+lcov.info
+
+# Agent files
+.agents/
+.claude/
+.codex/
+AGENTS.md
 
 # Custom files
 bin
-draft
-notes.txt
+.draft/
