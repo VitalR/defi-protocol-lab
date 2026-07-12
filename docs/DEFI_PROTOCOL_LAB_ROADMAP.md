@@ -12,11 +12,17 @@ The objective is not to clone production protocols. Each module should be the sm
 defi-protocol-lab/
 ├── src/
 │   ├── vault/
+│   ├── tokens/
+│   ├── staking/
 │   ├── amm/
 │   ├── oracle/
 │   ├── lending/
+│   ├── stablecoin/
+│   ├── rwa/
+│   ├── perps/
 │   ├── intents/
 │   ├── account/
+│   ├── governance/
 │   ├── adapters/
 │   └── common/
 ├── test/
@@ -155,6 +161,52 @@ Required tests:
 
 Do not make every lab contract upgradeable. Compare the UUPS vault with immutable AMM/lending components and document when upgrade risk is less acceptable than redeployment/migration.
 
+### 1C. Token accounting and staking primitives
+
+Build these before relying on them as collateral or protocol receipts:
+
+#### Share-based and rebasing token
+
+- internal shares versus externally visible balances;
+- positive and negative rebases;
+- total pooled assets/share-rate updates;
+- transfer and allowance rounding;
+- dust and full-balance transfer corner cases;
+- wrapper token with non-rebasing balances;
+- integrations that cache balances or assume transfer amounts remain stable;
+- rebase during vault, AMM, lending, and governance operations.
+
+#### Staking and rewards
+
+- stake/withdraw/claim;
+- `rewardPerToken` accumulator and user reward debt;
+- multiple reward epochs and leftover rewards;
+- changing stake balances during an epoch;
+- fee and treasury share;
+- lock/cooldown and emergency withdrawal policy;
+- reward funding, undistributed dust, and insolvency;
+- optional vote-power relationship without double counting liquid and staked tokens.
+
+#### Minimal LST model
+
+- pooled staking shares;
+- validator/delegation accounting represented by a mock staking backend;
+- oracle/accounting report that changes pooled assets;
+- positive rewards and negative slashing/penalty report;
+- withdrawal queue and delayed redemption;
+- liquidity mismatch between token supply and immediately withdrawable native assets;
+- rebasing LST and wrapped non-rebasing LST;
+- use as lending collateral with an LST/native exchange-rate oracle and depeg limits.
+
+Core invariants:
+
+- internal shares sum to total shares;
+- visible balances are derived consistently from shares and pooled assets;
+- a rebase changes claim value without inventing or deleting internal shares;
+- distributed plus remaining staking rewards never exceed funded rewards;
+- withdrawal claims cannot exceed available/queued staking assets;
+- governance voting power cannot be duplicated through wrapping or staking.
+
 ## Phase 2 — AMM, swaps, and oracle mechanics
 
 **Timebox:** 3 weeks
@@ -189,18 +241,47 @@ Core invariants:
 - A swap cannot output more than available reserves.
 - Fees are conserved between LPs and protocol recipients.
 
-### 2B. Oracle module
+### 2B. Oracle engineering module
 
-Implement:
+Treat the oracle as a shared protocol subsystem used by AMM, lending, stablecoin, LST, RWA, paymaster, and perpetual modules.
+
+Implement four educational sources/adapters:
+
+1. Governed/mock push oracle for deterministic unit and failure testing.
+2. On-chain AMM spot/TWAP adapter with observation history.
+3. Chainlink-style aggregator consumer and local mock aggregator.
+4. Optional EIP-712 signed pull report verified on-chain with signer quorum/authorization.
+
+The lab does not attempt to recreate Chainlink's complete off-chain node network. It focuses on producer/consumer trust boundaries, on-chain verification, and safe protocol integration.
+
+Required mechanics:
 
 - decimal normalization;
 - positive-price validation;
 - staleness checks;
+- round/report completeness and monotonic timestamp checks;
 - deviation bounds;
-- optional L2 sequencer check;
-- mock spot/TWAP/aggregator adapters.
+- heartbeat versus deviation-trigger semantics;
+- L2 sequencer uptime and grace period;
+- source-specific confidence/spread where available;
+- circuit breakers and last-good-price policy;
+- primary/fallback source design without silently accepting inconsistent prices;
+- update authorization, signer rotation, and replay protection;
+- manipulation-window and liquidity assumptions for TWAP;
+- price, rate, NAV, proof-of-reserve, and LST share-rate data types;
+- push versus pull delivery and who pays for updates;
+- stale/unavailable oracle behavior for deposits, borrowing, liquidation, redemption, and emergency settlement.
 
 Do not assume TWAP is automatically safe. Document manipulation cost, observation window, lag, liquidity, and fallback behaviour.
+
+Oracle invariants and tests:
+
+- normalized values have one documented unit and scale;
+- future, stale, zero, negative, replayed, or unauthorized reports are rejected;
+- a source switch cannot bypass deviation/circuit-breaker policy;
+- a failed oracle cannot silently become a valid zero price;
+- protocols fail closed for value-creating actions while preserving intentionally designed unwind paths;
+- liquidation behavior during oracle outage is explicit rather than accidental.
 
 ### 2C. Concentrated-liquidity study
 
@@ -210,6 +291,24 @@ Do not initially reimplement a full concentrated-liquidity AMM. Instead:
 - trace one swap across ticks;
 - write small math exercises and fork-based integration tests;
 - study singleton/pool-manager and hook architecture after the v2-style invariant is understood.
+
+### 2D. StableSwap/Curve mathematics
+
+After the constant-product pool, implement or derive a minimal two-asset StableSwap model:
+
+- constant-sum behavior near the peg and constant-product protection away from it;
+- amplification coefficient `A`;
+- invariant `D` and iterative/Newton solving;
+- solving output balance `y` and conservative rounding;
+- LP mint/burn and virtual price;
+- swap fee, admin/protocol fee, and optional dynamic fee;
+- unequal decimals and rate providers for yield-bearing/LST assets;
+- depeg behavior and liquidity concentration risk;
+- imbalanced deposits/withdrawals;
+- donation, rounding, convergence, and overflow boundaries;
+- study metapools after the plain-pool implementation is understood.
+
+Core tests compare StableSwap and constant-product execution across balanced, mildly imbalanced, and depegged states.
 
 ## Phase 3 — Minimal lending protocol
 
@@ -261,6 +360,98 @@ Advanced exercise:
 
 - Compare share-based lending pools with normalized income/index-based accounting.
 - Fork-test a deposit/borrow/repay/liquidation integration against a production lending protocol without copying its implementation.
+
+### 3B. Compound-style cToken/receipt-token accounting
+
+Implement a minimal market receipt token to understand:
+
+- cToken balance versus underlying claim;
+- exchange-rate growth;
+- `exchangeRateStored` versus state-accruing/current calculations;
+- cash, borrows, reserves, and total supply relationship;
+- borrow index and per-account borrow snapshots;
+- mint/redeem/borrow/repay/liquidate flow;
+- reserve factor and protocol reserves;
+- underlying/cToken decimal scaling;
+- accrual-on-interaction and stale stored values;
+- return-code versus revert-based error handling as a historical integration concern.
+
+Compare this with ERC-4626 shares and modern scaled-balance lending accounting rather than copying Compound V2 wholesale.
+
+### 3C. RWA token and lending collateral
+
+Use a mock tokenized RWA to study smart-contract architecture, not jurisdiction-specific legal advice:
+
+- issuer/custodian/transfer-agent roles;
+- allowlist/identity and transfer restrictions;
+- pause, freeze, forced transfer, redemption, and administrative risk;
+- NAV, proof-of-reserve, reserve timestamp, and market-hours semantics;
+- off-chain default/custody risk that on-chain code cannot eliminate;
+- corporate-action or income-distribution hooks;
+- token decimals and settlement delay;
+- lending isolation mode, collateral cap, conservative haircut, and debt ceiling;
+- stale NAV and unavailable secondary-market liquidity;
+- liquidation design when the collateral cannot be transferred permissionlessly or sold continuously.
+
+The oracle layer supplies normalized NAV/price and reserve-status data. Lending must reject or isolate RWA collateral when freshness, reserve, transferability, or market-liquidity assumptions fail.
+
+### 3D. Crypto-backed stablecoin system
+
+Build a minimal overcollateralized stablecoin system reusing the lending and oracle primitives:
+
+- collateral vault/CDP;
+- mint/burn stablecoin debt;
+- collateral ratio and liquidation ratio;
+- stability fee through a debt/rate index;
+- per-collateral debt ceiling and global debt ceiling;
+- collateral-specific risk parameters;
+- liquidation penalty and partial/full liquidation;
+- bad-debt and surplus accounting;
+- reserve/insurance module;
+- peg monitoring and optional bounded peg-stability swap module;
+- savings/rate module as an advanced extension;
+- emergency shutdown and fair settlement model;
+- governance separation between risk, oracle, upgrade, and emergency powers.
+
+Core invariants:
+
+- total stablecoin liabilities reconcile with normalized system debt and explicitly accounted surplus/bad debt;
+- minting cannot leave a position below the required collateral ratio;
+- debt ceilings cannot be exceeded through rounding or multi-collateral composition;
+- repayment/burn cannot increase debt;
+- liquidations conserve debt and collateral value under the defined penalty;
+- oracle failure cannot mint unbacked stablecoins;
+- shutdown fixes a coherent settlement state and prevents new risk creation.
+
+### 3E. Minimal perpetual DEX
+
+Build a local/test-only oracle-priced perpetual engine after AMM, oracle, lending, and stablecoin accounting are understood:
+
+- isolated positions and collateral;
+- long/short position size and entry price;
+- realized and unrealized PnL;
+- initial and maintenance margin;
+- funding-rate transfer between long and short sides;
+- borrowing/utilization fee paid to liquidity providers;
+- open-interest caps and skew;
+- price impact based on imbalance;
+- increase, decrease, close, and liquidation;
+- keeper/order execution with acceptable-price and deadline bounds;
+- LP pool solvency and trader-profit liability;
+- bad debt, insurance fund, and ADL/socialized-loss concepts;
+- oracle delay, stale report, confidence, front-running, and two-phase execution;
+- GMX-style pool-backed versus order-book/perp-clearinghouse architecture comparison;
+- Hyperliquid-style architecture studied conceptually, with the Solidity implementation limited to EVM-relevant clearing and risk mechanics.
+
+Core invariants:
+
+- position and market open interest reconcile;
+- funding is value transfer, not value creation;
+- realized PnL plus fees exactly explains collateral changes;
+- withdrawals cannot make an open position violate maintenance requirements;
+- liquidation cannot pay out more collateral than the position/system owns;
+- trader claims plus LP liabilities remain bounded by pool assets or explicit bad debt;
+- stale or invalid oracle reports cannot execute value-sensitive orders.
 
 ## Phase 4 — EIP-712 intents and keeper execution
 
@@ -482,6 +673,32 @@ Produce:
 - governance attack register;
 - incident and signer-loss recovery runbook.
 
+### 6E. Optional TGE and vesting module
+
+Keep this as an optional token-lifecycle and treasury exercise rather than a market-launch project:
+
+- fixed allocation and mint-cap invariants;
+- team, treasury, ecosystem, and community allocation accounting;
+- cliff plus linear vesting;
+- revocable versus irrevocable grants;
+- beneficiary transfer policy;
+- claim-based vesting rather than automatic iteration;
+- Merkle allocation claims and duplicate-claim prevention;
+- EIP-712 delegated claims as an optional extension;
+- cancellation, clawback, and unallocated-token recovery;
+- timestamp boundaries and rounding dust;
+- governance-token delegation before/after claim and prevention of duplicated voting power;
+- treasury/timelock control and immutable allocation records;
+- upgradeability decision and protection against retroactive vesting changes.
+
+Core invariants:
+
+- minted plus mintable supply never exceeds the cap;
+- claimed plus still-vested allocation never exceeds the grant;
+- vested amount is monotonic and bounded by total allocation;
+- cancellation cannot confiscate already vested value;
+- one allocation cannot create voting power in both escrow and liquid token form unless explicitly designed.
+
 ## Phase 7 — Modern EVM storage and modular architecture
 
 **Timebox:** 1–2 weeks, integrated into earlier modules
@@ -622,26 +839,31 @@ Required deliverables:
 - executed DAO proposal for a parameter update and UUPS upgrade;
 - audit-style report with remediation commit.
 
-## Suggested 25-week sequence
+## Suggested 34-week focused sequence
 
 | Weeks | Work |
 | --- | --- |
 | 1 | EVM, decimals, rounding, invariant foundations |
 | 2–3 | Hardened vault and fees |
 | 4 | UUPS vault V1→V2, migration, storage corruption lab |
-| 5–7 | Constant-product AMM, fees, oracle, concentrated-liquidity study |
-| 8–11 | Lending, interest indices, liquidation, bad debt |
-| 12–13 | EIP-712 orders, keepers, partial fills, fees |
-| 14–15 | ERC-4337/EIP-7702 account execution |
-| 16 | Sponsored/verifying paymaster |
-| 17 | ERC-20 paymaster extension |
-| 18–19 | Operational governance, DAO Governor, timelock, treasury and UUPS proposal |
-| 20 | Transient and namespaced storage exercises |
-| 21 | Applied cryptography exercises |
-| 22–24 | Integrated capstone |
-| 25 | Audit, remediation, documentation, design defence |
+| 5–6 | Rebase token, staking rewards, LST and wrapped LST |
+| 7–9 | Constant-product AMM and dedicated oracle engineering |
+| 10–11 | StableSwap math, fees, depeg tests and concentrated-liquidity study |
+| 12–15 | Lending, interest indices, liquidation, bad debt and cToken comparison |
+| 16 | RWA token model and isolated lending collateral |
+| 17–19 | Crypto-backed stablecoin, stability fees and shutdown |
+| 20–22 | Minimal perpetual engine, funding, PnL, liquidation and LP solvency |
+| 23–24 | EIP-712 orders, keepers, partial fills, fees |
+| 25–26 | ERC-4337/EIP-7702 account execution |
+| 27 | Sponsored/verifying paymaster |
+| 28 | ERC-20 paymaster extension |
+| 29–30 | Operational governance, DAO Governor, timelock, treasury and UUPS proposal |
+| 31 | Transient/namespaced storage and applied cryptography exercises |
+| 32 | Optional TGE/vesting or additional adversarial testing |
+| 33 | Integrated capstone |
+| 34 | Audit, remediation, documentation and design defence |
 
-At 6–8 hours per week, expand this to roughly 30–34 weeks. The ERC-20 paymaster may be moved after the capstone if schedule pressure appears. Do not sacrifice invariant or governance-lifecycle testing to meet the calendar.
+This is the compressed focused sequence, not a delivery promise. At 6–8 hours per week, expect roughly 42–50 weeks. The ERC-20 paymaster, TGE/vesting, full StableSwap implementation, or perpetual extension may move after the first capstone if schedule pressure appears. Do not sacrifice invariant, economic, oracle-failure, or governance-lifecycle testing to meet the calendar.
 
 ## Priority order
 
@@ -650,9 +872,10 @@ At 6–8 hours per week, expand this to roughly 30–34 weeks. The ERC-20 paymas
 1. Accounting, decimals, rounding, and conservation.
 2. Threat modelling and exact invariants.
 3. Vault, AMM, oracle, lending, and liquidation mechanics.
-4. EIP-712, nonce/replay design, external-call safety.
-5. Unit, fuzz, stateful invariant, adversarial, and fork tests.
-6. Governance, treasury, upgrades, deployment, and operational risk.
+4. Share/rebase/LST, stablecoin, RWA, and perpetual accounting.
+5. EIP-712, nonce/replay design, external-call safety.
+6. Unit, fuzz, stateful invariant, adversarial, and fork tests.
+7. Governance, treasury, upgrades, deployment, and operational risk.
 
 ### Strong differentiators
 
@@ -663,6 +886,7 @@ At 6–8 hours per week, expand this to roughly 30–34 weeks. The ERC-20 paymas
 5. Keeper/intent architecture and MEV-aware execution.
 6. Audit-quality severity calibration and remediation.
 7. DAO/timelock lifecycle, role safety, and governance attack analysis.
+8. Oracle architecture across on-chain, push-feed, signed-report, NAV, and reserve data.
 
 ### Learn conceptually before implementing deeply
 
