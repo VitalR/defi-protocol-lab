@@ -1,4 +1,7 @@
 {
+  "lib/aave-address-book": {
+    "rev": "c389d532542450fa9920c64a60b19f542d1ee6ba"
+  },
   "lib/aave-v3-core": {
     "rev": "2031a54d5ab6f72fd7877acf497cb82e97e0fe8b"
   },
