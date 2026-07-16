@@ -11,4 +11,15 @@ contract TokenTransferHarness {
     function pullBalanceDelta(IERC20 token, address from, uint256 amount) external returns (uint256 received) {
         return TokenTransfer.pullBalanceDelta(token, from, amount);
     }
+
+    function pushExact(IERC20 token, address to, uint256 amount) external returns (uint256 spent, uint256 received) {
+        return TokenTransfer.pushExact(token, to, amount);
+    }
+
+    function pushBalanceDelta(IERC20 token, address to, uint256 amount)
+        external
+        returns (uint256 spent, uint256 received)
+    {
+        return TokenTransfer.pushBalanceDelta(token, to, amount);
+    }
 }
