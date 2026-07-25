@@ -13,7 +13,7 @@ contract CollateralValueOracleTest is Test {
     MockAggregatorV3 feed;
 
     function setUp() public {
-        feed = new MockAggregatorV3(uint256(1), uint8(8));
+        feed = new MockAggregatorV3(uint256(1), uint8(8), "MockAggregatorV3::ETH/USD");
         adapter = new PushOracleAdapter(address(feed), bytes32("ETH"), bytes32("USD"), 1 hours);
         consumer = new CollateralValueOracle(adapter, 18);
     }
@@ -40,7 +40,7 @@ contract CollateralValueOracleTest is Test {
     }
 
     function test_CollateralValue_18decimal() public {
-        MockAggregatorV3 feed18decimal = new MockAggregatorV3(uint256(1), uint8(18));
+        MockAggregatorV3 feed18decimal = new MockAggregatorV3(uint256(1), uint8(18), "MockAggregatorV3::ETH/USD");
         PushOracleAdapter adapter1 = new PushOracleAdapter(address(feed18decimal), bytes32("ETH"), bytes32("USD"), 3600);
         CollateralValueOracle consumer1 = new CollateralValueOracle(adapter1, 18);
 
@@ -68,7 +68,7 @@ contract CollateralValueOracleTest is Test {
     }
 
     function test_CollateralValue_6decimal() public {
-        MockAggregatorV3 feed8decimal = new MockAggregatorV3(uint256(1), uint8(8));
+        MockAggregatorV3 feed8decimal = new MockAggregatorV3(uint256(1), uint8(8), "MockAggregatorV3::ETH/USD");
         PushOracleAdapter adapter1 = new PushOracleAdapter(address(feed8decimal), bytes32("ETH"), bytes32("USD"), 3600);
         CollateralValueOracle consumer1 = new CollateralValueOracle(adapter1, 6);
 
@@ -92,7 +92,7 @@ contract CollateralValueOracleTest is Test {
     }
 
     function test_Valuation_EnforcesConservativeRounding() public {
-        MockAggregatorV3 roundingFeed = new MockAggregatorV3(1, 18);
+        MockAggregatorV3 roundingFeed = new MockAggregatorV3(1, 18, "MockAggregatorV3::ETH/USD");
 
         PushOracleAdapter roundingAdapter =
             new PushOracleAdapter(address(roundingFeed), bytes32("TOKEN"), bytes32("USD"), 1 hours);

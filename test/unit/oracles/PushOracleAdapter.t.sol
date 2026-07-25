@@ -10,7 +10,7 @@ contract PushOracleAdapterTest is Test {
     MockAggregatorV3 feed;
 
     function setUp() public {
-        feed = new MockAggregatorV3(uint256(1), uint8(8));
+        feed = new MockAggregatorV3(uint256(1), uint8(8), "MockAggregatorV3::ETH/USD");
         adapter = new PushOracleAdapter(address(feed), bytes32("ETH"), bytes32("USD"), 1 hours);
     }
 
@@ -30,7 +30,8 @@ contract PushOracleAdapterTest is Test {
         vm.expectRevert(PushOracleAdapter.ZeroMaxStaleness.selector);
         new PushOracleAdapter(address(feed), bytes32("ETH"), bytes32("USD"), 0);
 
-        MockAggregatorV3 feedWithUnsupportedDecimals = new MockAggregatorV3(uint256(1), uint8(21));
+        MockAggregatorV3 feedWithUnsupportedDecimals =
+            new MockAggregatorV3(uint256(1), uint8(21), "MockAggregatorV3::ETH/USD");
         vm.expectRevert(abi.encodeWithSelector(PushOracleAdapter.UnsupportedFeedDecimals.selector, uint8(21)));
         new PushOracleAdapter(address(feedWithUnsupportedDecimals), bytes32("ETH"), bytes32("USD"), 10);
     }
@@ -51,7 +52,7 @@ contract PushOracleAdapterTest is Test {
     }
 
     function test_LatestRoundData_Eighteendecimals_NormalizesCorrectly() public {
-        MockAggregatorV3 feed18decimal = new MockAggregatorV3(uint256(1), uint8(18));
+        MockAggregatorV3 feed18decimal = new MockAggregatorV3(uint256(1), uint8(18), "MockAggregatorV3::ETH/USD");
         PushOracleAdapter adapter1 = new PushOracleAdapter(address(feed18decimal), bytes32("ETH"), bytes32("USD"), 3600);
 
         uint256 expectedUpdatedAt = block.timestamp;
