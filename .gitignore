@@ -79,6 +79,7 @@ broadcast/
 
 # Coverage file
 lcov.info
+lcov-filtered.info
 
 # Agent files
 .agents/
