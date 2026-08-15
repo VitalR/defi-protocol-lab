@@ -66,8 +66,8 @@ contract MockUniswapV3Pool is IUniswapV3PoolOracle {
         tickCumulatives[0] = pastTickCumulative;
         tickCumulatives[1] = currentTickCumulative;
 
-        // Adapter не использует этот accumulator,
-        // но interface требует вернуть массив.
+        // Adapter does not use this accumulator,
+        // but interface require to return it as an array.
         secondsPerLiquidityCumulativeX128s = new uint160[](2);
     }
 
@@ -85,12 +85,12 @@ contract MockUniswapV3Pool is IUniswapV3PoolOracle {
             bool unlocked
         )
     {
-        // Adapter использует только observationIndex.
+        // Adapter use only observationIndex.
         sqrtPriceX96 = 0;
         tick = 0;
         observationIndex = latestObservationIndex;
 
-        // В mock считаем, что существует один observation slot.
+        // Suppose there is only one existing observation slot in mock.
         observationCardinality = 1;
         observationCardinalityNext = 1;
 

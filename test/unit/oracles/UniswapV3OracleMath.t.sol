@@ -96,4 +96,27 @@ contract UniswapV3OracleMathTest is Test {
             1e14 // possible rel 0.01%
         );
     }
+
+    function test_GetQuoteAtTick_HighSqrtPrice_QuotesBothDirections() public {
+        int24 tick = 500_000;
+
+        // positive very-high tick
+        // → token1/token0 >> 1
+
+        // TOKEN0 → TOKEN1
+        // → quote must be much larger
+
+        // TOKEN1 → TOKEN0
+        // → quote must be much smaller
+
+        // sqrtPriceX96 > type(uint128).max
+
+        uint256 directQuote = harness.getQuoteAtTick(tick, ONE_TOKEN, TOKEN0, TOKEN1);
+
+        uint256 inverseQuote = harness.getQuoteAtTick(tick, ONE_TOKEN, TOKEN1, TOKEN0);
+
+        assertGt(directQuote, ONE_TOKEN);
+        assertGe(inverseQuote, 0);
+        assertLt(inverseQuote, ONE_TOKEN);
+    }
 }
