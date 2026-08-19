@@ -6,12 +6,14 @@ import { UniswapV3SwapAdapter, ISwapAdapter } from "src/labs/swaps/adapters/Unis
 import { MockUniswapV3SwapRouter } from "test/mocks/MockUniswapV3SwapRouter.sol";
 import { MockWETH } from "test/mocks/MockWETH.sol";
 import { MockUSDC } from "test/mocks/MockUSDC.sol";
+import { MockWBTC } from "test/mocks/MockWBTC.sol";
 
 contract UniswapV3SwapAdapterTest is Test {
     UniswapV3SwapAdapter adapter;
     MockUniswapV3SwapRouter router;
     MockWETH mockWETH;
     MockUSDC mockUSDC;
+    MockWBTC mockWBTC;
 
     address user = address(0x1001);
     uint256 initialETHBalance = 10 ether;
@@ -25,6 +27,9 @@ contract UniswapV3SwapAdapterTest is Test {
 
         mockWETH = new MockWETH();
         mockWETH.mint(user, initialETHBalance);
+
+        mockWBTC = new MockWBTC();
+        mockWBTC.mint(address(router), 5e8);
     }
 
     function test_deployment_constructorConfiguration() public {
@@ -431,5 +436,222 @@ contract UniswapV3SwapAdapterTest is Test {
         assertEq(router.lastRecipient(), user);
         assertEq(router.lastAmountIn(), swapAmount);
         assertEq(router.lastAmountOutMinimum(), amountOut);
+    }
+
+    function test_swapExactInput_multihopPath() public {
+        // Suppose:
+        // 1 WETH ≈ $1,950
+        // 1 BTC  ≈ $30,000
+        // => 1950 / 30000 ≈ 0.065 BTC =>
+
+        uint256 amountOut = 0.065e8;
+        uint256 swapAmount = 1 ether;
+
+        router.setAmountOut(amountOut);
+        router.setMultihopTokens(address(mockWETH), address(mockWBTC));
+
+        assertEq(mockWBTC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+
+        vm.startPrank(user);
+        mockWETH.approve(address(adapter), swapAmount);
+
+        uint256 receivedAmount = adapter.swapExactInput(
+            ISwapAdapter.ExactInputParams({
+                tokenIn: address(mockWETH),
+                tokenOut: address(mockWBTC),
+                amountIn: swapAmount,
+                minAmountOut: amountOut,
+                recipient: user,
+                deadline: block.timestamp,
+                route: abi.encodePacked(
+                    address(mockWETH), uint24(3000), address(mockUSDC), uint24(500), address(mockWBTC)
+                )
+            })
+        );
+
+        vm.stopPrank();
+
+        assertEq(receivedAmount, amountOut);
+        assertEq(mockWBTC.balanceOf(user), amountOut);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance - swapAmount);
+        assertEq(mockWETH.balanceOf(address(router)), swapAmount);
+
+        assertEq(mockWETH.balanceOf(address(adapter)), 0);
+        assertEq(mockWBTC.balanceOf(address(adapter)), 0);
+
+        assertEq(mockWETH.allowance(address(adapter), address(router)), 0);
+
+        assertEq(router.lastRecipient(), user);
+        assertEq(router.lastAmountIn(), swapAmount);
+        assertEq(router.lastAmountOutMinimum(), amountOut);
+    }
+
+    function test_swapExactInput_multihopPath_reverts_whenInsufficientAmountOut() public {
+        // Suppose:
+        // 1 WETH ≈ $1,950
+        // 1 BTC  ≈ $30,000
+        // => 1950 / 30000 ≈ 0.065 BTC =>
+
+        uint256 amountOut = 0.065e8;
+        uint256 swapAmount = 1 ether;
+
+        router.setAmountOut(0.06e8); // < amountOut
+        router.setMultihopTokens(address(mockWETH), address(mockWBTC));
+
+        assertEq(mockWBTC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+
+        vm.startPrank(user);
+        mockWETH.approve(address(adapter), swapAmount);
+
+        vm.expectRevert(abi.encodeWithSelector(UniswapV3SwapAdapter.InsufficientAmountOut.selector, amountOut, 0.06e8));
+
+        adapter.swapExactInput(
+            ISwapAdapter.ExactInputParams({
+                tokenIn: address(mockWETH),
+                tokenOut: address(mockWBTC),
+                amountIn: swapAmount,
+                minAmountOut: amountOut,
+                recipient: user,
+                deadline: block.timestamp,
+                route: abi.encodePacked(
+                    address(mockWETH), uint24(3000), address(mockUSDC), uint24(500), address(mockWBTC)
+                )
+            })
+        );
+
+        vm.stopPrank();
+
+        assertEq(mockWBTC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+    }
+
+    function test_swapExactInput_multihopPath_reverts_propagatesRouterRevert() public {
+        uint256 amountOut = 0.065e8;
+        uint256 swapAmount = 1 ether;
+
+        router.setAmountOut(amountOut);
+        router.setMultihopTokens(address(mockWETH), address(mockWBTC));
+        router.setShouldRevert(true);
+
+        assertEq(mockWBTC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+
+        vm.startPrank(user);
+        mockWETH.approve(address(adapter), swapAmount);
+
+        vm.expectRevert(MockUniswapV3SwapRouter.MockRouterRevert.selector);
+
+        adapter.swapExactInput(
+            ISwapAdapter.ExactInputParams({
+                tokenIn: address(mockWETH),
+                tokenOut: address(mockWBTC),
+                amountIn: swapAmount,
+                minAmountOut: amountOut,
+                recipient: user,
+                deadline: block.timestamp,
+                route: abi.encodePacked(
+                    address(mockWETH), uint24(3000), address(mockUSDC), uint24(500), address(mockWBTC)
+                )
+            })
+        );
+
+        vm.stopPrank();
+
+        assertEq(mockWBTC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+    }
+
+    function test_swapExactInput_multihopPath_reverts_whenBelowValidPath() public {
+        vm.startPrank(user);
+        mockWETH.approve(address(adapter), 1 ether);
+
+        vm.expectRevert(UniswapV3SwapAdapter.InvalidRoute.selector);
+
+        adapter.swapExactInput(
+            ISwapAdapter.ExactInputParams({
+                tokenIn: address(mockWETH),
+                tokenOut: address(mockWBTC),
+                amountIn: 1 ether,
+                minAmountOut: 0.5e8,
+                recipient: user,
+                deadline: block.timestamp,
+                route: abi.encodePacked(address(mockWETH), uint24(3000), address(mockUSDC), uint8(0), address(mockWBTC))
+            })
+        );
+        // route: 20 + 3 + 20 + 1 + 20 = 64 bytes
+
+        vm.stopPrank();
+    }
+
+    function test_swapExactInput_multihopPath_reverts_whenAboveValidPath() public {
+        vm.startPrank(user);
+        mockWETH.approve(address(adapter), 1 ether);
+
+        vm.expectRevert(UniswapV3SwapAdapter.InvalidRoute.selector);
+
+        adapter.swapExactInput(
+            ISwapAdapter.ExactInputParams({
+                tokenIn: address(mockWETH),
+                tokenOut: address(mockWBTC),
+                amountIn: 1 ether,
+                minAmountOut: 0.5e8,
+                recipient: user,
+                deadline: block.timestamp,
+                route: abi.encodePacked(
+                    address(mockWETH), uint24(3000), address(mockUSDC), uint32(500), address(mockWBTC)
+                )
+            })
+        );
+        // route: 20 + 3 + 20 + 4 + 20 = 67 bytes
+
+        vm.stopPrank();
+    }
+
+    function test_swapExactInput_multihopPath_reverts_whenTokenInMismatch() public {
+        vm.startPrank(user);
+        mockWETH.approve(address(adapter), 1 ether);
+
+        vm.expectRevert(UniswapV3SwapAdapter.TokenMismatch.selector);
+
+        adapter.swapExactInput(
+            ISwapAdapter.ExactInputParams({
+                tokenIn: address(mockWETH),
+                tokenOut: address(mockWBTC),
+                amountIn: 1 ether,
+                minAmountOut: 0.5e8,
+                recipient: user,
+                deadline: block.timestamp,
+                route: abi.encodePacked(
+                    address(mockUSDC), uint24(3000), address(mockUSDC), uint24(500), address(mockWBTC)
+                )
+            })
+        );
+
+        vm.stopPrank();
+    }
+
+    function test_swapExactInput_multihopPath_reverts_whenTokenOutMismatch() public {
+        vm.startPrank(user);
+        mockWETH.approve(address(adapter), 1 ether);
+
+        vm.expectRevert(UniswapV3SwapAdapter.TokenMismatch.selector);
+
+        adapter.swapExactInput(
+            ISwapAdapter.ExactInputParams({
+                tokenIn: address(mockWETH),
+                tokenOut: address(mockWBTC),
+                amountIn: 1 ether,
+                minAmountOut: 0.5e8,
+                recipient: user,
+                deadline: block.timestamp,
+                route: abi.encodePacked(
+                    address(mockWETH), uint24(3000), address(mockUSDC), uint24(500), address(mockUSDC)
+                )
+            })
+        );
+
+        vm.stopPrank();
     }
 }
