@@ -654,4 +654,517 @@ contract UniswapV3SwapAdapterTest is Test {
 
         vm.stopPrank();
     }
+
+    // ===SwapExactOutput mental model===
+    // Exact output:
+
+    // caller owns 10 WETH
+
+    // maxAmountIn = 5.2 WETH
+    // amountOut   = 10,000 USDC
+
+    // caller:
+    // 10 WETH
+    // ↓ pull 5.2
+
+    // adapter:
+    // 5.2 WETH
+    // ↓ router consumes 4.85
+
+    // router:
+    // 4.85 WETH
+
+    // recipient:
+    // +10,000 USDC
+
+    // adapter:
+    // 0.35 WETH
+    // ↓ refund
+
+    // caller:
+    // 5.15 WETH remaining total
+    function test_swapExactOutput_singleHop() public {
+        uint256 deadline = block.timestamp + 30 minutes;
+        uint256 amountOut = 10_000e6;
+        uint256 routerAmountIn = 4.85 ether;
+        router.setExactOutputBehavior(routerAmountIn, routerAmountIn);
+
+        uint24 fee = 3000;
+        uint256 maxAmountIn = 5.2 ether;
+
+        assertEq(mockUSDC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+
+        vm.startPrank(user);
+        mockWETH.approve(address(adapter), maxAmountIn);
+
+        uint256 amountIn = adapter.swapExactOutput(
+            ISwapAdapter.ExactOutputParams({
+                tokenIn: address(mockWETH),
+                tokenOut: address(mockUSDC),
+                amountOut: amountOut,
+                maxAmountIn: maxAmountIn,
+                recipient: user,
+                deadline: deadline,
+                route: abi.encode(fee)
+            })
+        );
+
+        vm.stopPrank();
+
+        assertEq(amountIn, routerAmountIn);
+        assertEq(mockUSDC.balanceOf(user), amountOut);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance - routerAmountIn);
+        assertEq(mockWETH.balanceOf(address(router)), routerAmountIn);
+
+        assertEq(mockWETH.balanceOf(address(adapter)), 0);
+        assertEq(mockUSDC.balanceOf(address(adapter)), 0);
+
+        assertEq(mockWETH.allowance(address(adapter), address(router)), 0);
+
+        assertEq(router.lastTokenIn(), address(mockWETH));
+        assertEq(router.lastTokenOut(), address(mockUSDC));
+        assertEq(router.lastFee(), 3000);
+        assertEq(router.lastRecipient(), user);
+        assertEq(router.lastAmountOut(), amountOut);
+        assertEq(router.lastAmountInMaximum(), maxAmountIn);
+
+        // Balance transitions
+        // User initially:
+        // 10 WETH
+
+        // Adapter pulls max:
+        // User     = 4.8
+        // Adapter  = 5.2
+
+        // Router spends actual 4.85:
+        // Adapter  = 0.35
+        // Router   = 4.85
+
+        // Adapter refunds 0.35:
+        // Adapter  = 0
+        // User     = 5.15
+
+        // => 10 - 5.15 = 4.85 WETH actual expenditure
+    }
+
+    function test_swapExactOutput_singleHop_noRefund() public {
+        uint256 deadline = block.timestamp + 30 minutes;
+        uint256 amountOut = 10_000e6;
+        uint256 routerAmountIn = 5 ether;
+        router.setExactOutputBehavior(routerAmountIn, routerAmountIn);
+
+        uint24 fee = 3000;
+        uint256 maxAmountIn = 5 ether;
+
+        assertEq(mockUSDC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+
+        vm.startPrank(user);
+        mockWETH.approve(address(adapter), maxAmountIn);
+
+        uint256 amountIn = adapter.swapExactOutput(
+            ISwapAdapter.ExactOutputParams({
+                tokenIn: address(mockWETH),
+                tokenOut: address(mockUSDC),
+                amountOut: amountOut,
+                maxAmountIn: maxAmountIn,
+                recipient: user,
+                deadline: deadline,
+                route: abi.encode(fee)
+            })
+        );
+
+        vm.stopPrank();
+
+        assertEq(amountIn, routerAmountIn);
+        assertEq(mockUSDC.balanceOf(user), amountOut);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance - routerAmountIn);
+        assertEq(mockWETH.balanceOf(address(router)), routerAmountIn);
+
+        assertEq(mockWETH.balanceOf(address(adapter)), 0);
+        assertEq(mockUSDC.balanceOf(address(adapter)), 0);
+
+        assertEq(mockWETH.allowance(address(adapter), address(router)), 0);
+
+        assertEq(router.lastTokenIn(), address(mockWETH));
+        assertEq(router.lastTokenOut(), address(mockUSDC));
+        assertEq(router.lastFee(), 3000);
+        assertEq(router.lastRecipient(), user);
+        assertEq(router.lastAmountOut(), amountOut);
+        assertEq(router.lastAmountInMaximum(), maxAmountIn);
+    }
+
+    function test_swapExactOutput_singleHop_reverts_whenExcessiveAmountIn() public {
+        uint256 amountOut = 10_000e6;
+        uint256 maxAmountIn = 5 ether;
+
+        router.setExactOutputBehavior(
+            5 ether, // actually spent
+            5.1 ether // maliciously reported
+        );
+
+        assertEq(mockUSDC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+
+        vm.startPrank(user);
+        mockWETH.approve(address(adapter), maxAmountIn);
+
+        vm.expectRevert(abi.encodeWithSelector(UniswapV3SwapAdapter.ExcessiveAmountIn.selector, maxAmountIn, 5.1 ether));
+
+        adapter.swapExactOutput(
+            ISwapAdapter.ExactOutputParams({
+                tokenIn: address(mockWETH),
+                tokenOut: address(mockUSDC),
+                amountOut: amountOut,
+                maxAmountIn: maxAmountIn,
+                recipient: user,
+                deadline: block.timestamp + 30 minutes,
+                route: abi.encode(uint24(3000))
+            })
+        );
+
+        vm.stopPrank();
+
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+        assertEq(mockUSDC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(address(adapter)), 0);
+        assertEq(mockWETH.balanceOf(address(router)), 0);
+        assertEq(mockWETH.allowance(address(adapter), address(router)), 0);
+    }
+
+    function test_swapExactOutput_singleHop_reverts_whenRouterRevert() public {
+        uint256 amountOut = 10_000e6;
+        uint256 routerAmountIn = 5.1 ether;
+        router.setExactOutputBehavior(routerAmountIn, routerAmountIn);
+        router.setShouldRevert(true);
+
+        uint256 maxAmountIn = 5 ether;
+
+        assertEq(mockUSDC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+
+        vm.startPrank(user);
+        mockWETH.approve(address(adapter), routerAmountIn);
+
+        vm.expectRevert(MockUniswapV3SwapRouter.MockRouterRevert.selector);
+
+        adapter.swapExactOutput(
+            ISwapAdapter.ExactOutputParams({
+                tokenIn: address(mockWETH),
+                tokenOut: address(mockUSDC),
+                amountOut: amountOut,
+                maxAmountIn: maxAmountIn,
+                recipient: user,
+                deadline: block.timestamp + 30 minutes,
+                route: abi.encode(uint24(3000))
+            })
+        );
+
+        vm.stopPrank();
+
+        assertEq(mockUSDC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+        assertEq(mockWETH.balanceOf(address(adapter)), 0);
+        assertEq(mockUSDC.balanceOf(address(adapter)), 0);
+        assertEq(mockWETH.allowance(address(adapter), address(router)), 0);
+    }
+
+    function test_swapExactOutput_singleHop_reverts_whenTokenInZeroAddress() public {
+        uint256 amountOut = 10_000e6;
+        uint256 routerAmountIn = 5 ether;
+        router.setExactOutputBehavior(routerAmountIn, routerAmountIn);
+        router.setShouldRevert(true);
+
+        uint256 maxAmountIn = 5 ether;
+
+        assertEq(mockUSDC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+
+        vm.startPrank(user);
+        mockWETH.approve(address(adapter), routerAmountIn);
+
+        vm.expectRevert(UniswapV3SwapAdapter.ZeroAddress.selector);
+
+        adapter.swapExactOutput(
+            ISwapAdapter.ExactOutputParams({
+                tokenIn: address(0),
+                tokenOut: address(mockUSDC),
+                amountOut: amountOut,
+                maxAmountIn: maxAmountIn,
+                recipient: user,
+                deadline: block.timestamp + 30 minutes,
+                route: abi.encode(uint24(3000))
+            })
+        );
+
+        vm.stopPrank();
+
+        assertEq(mockUSDC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+        assertEq(mockWETH.balanceOf(address(adapter)), 0);
+        assertEq(mockUSDC.balanceOf(address(adapter)), 0);
+        assertEq(mockWETH.allowance(address(adapter), address(router)), 0);
+    }
+
+    function test_swapExactOutput_singleHop_reverts_whenTokenOutZeroAddress() public {
+        uint256 amountOut = 10_000e6;
+        uint256 routerAmountIn = 5 ether;
+        router.setExactOutputBehavior(routerAmountIn, routerAmountIn);
+        router.setShouldRevert(true);
+
+        uint256 maxAmountIn = 5 ether;
+
+        assertEq(mockUSDC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+
+        vm.startPrank(user);
+        mockWETH.approve(address(adapter), routerAmountIn);
+
+        vm.expectRevert(UniswapV3SwapAdapter.ZeroAddress.selector);
+
+        adapter.swapExactOutput(
+            ISwapAdapter.ExactOutputParams({
+                tokenIn: address(mockWETH),
+                tokenOut: address(0),
+                amountOut: amountOut,
+                maxAmountIn: maxAmountIn,
+                recipient: user,
+                deadline: block.timestamp + 30 minutes,
+                route: abi.encode(uint24(3000))
+            })
+        );
+
+        vm.stopPrank();
+
+        assertEq(mockUSDC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+        assertEq(mockWETH.balanceOf(address(adapter)), 0);
+        assertEq(mockUSDC.balanceOf(address(adapter)), 0);
+        assertEq(mockWETH.allowance(address(adapter), address(router)), 0);
+    }
+
+    function test_swapExactOutput_singleHop_reverts_whenRecipientZeroAddress() public {
+        uint256 amountOut = 10_000e6;
+        uint256 routerAmountIn = 5 ether;
+        router.setExactOutputBehavior(routerAmountIn, routerAmountIn);
+        router.setShouldRevert(true);
+
+        uint256 maxAmountIn = 5 ether;
+
+        assertEq(mockUSDC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+
+        vm.startPrank(user);
+        mockWETH.approve(address(adapter), routerAmountIn);
+
+        vm.expectRevert(UniswapV3SwapAdapter.ZeroAddress.selector);
+
+        adapter.swapExactOutput(
+            ISwapAdapter.ExactOutputParams({
+                tokenIn: address(mockWETH),
+                tokenOut: address(mockUSDC),
+                amountOut: amountOut,
+                maxAmountIn: maxAmountIn,
+                recipient: address(0),
+                deadline: block.timestamp + 30 minutes,
+                route: abi.encode(uint24(3000))
+            })
+        );
+
+        vm.stopPrank();
+
+        assertEq(mockUSDC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+        assertEq(mockWETH.balanceOf(address(adapter)), 0);
+        assertEq(mockUSDC.balanceOf(address(adapter)), 0);
+        assertEq(mockWETH.allowance(address(adapter), address(router)), 0);
+    }
+
+    function test_swapExactOutput_singleHop_reverts_whenZeroAmountOut() public {
+        uint256 amountOut = 10_000e6;
+        uint256 routerAmountIn = 5 ether;
+        router.setExactOutputBehavior(routerAmountIn, routerAmountIn);
+        router.setShouldRevert(true);
+
+        uint256 maxAmountIn = 5 ether;
+
+        assertEq(mockUSDC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+
+        vm.startPrank(user);
+        mockWETH.approve(address(adapter), routerAmountIn);
+
+        vm.expectRevert(UniswapV3SwapAdapter.ZeroAmountOut.selector);
+
+        adapter.swapExactOutput(
+            ISwapAdapter.ExactOutputParams({
+                tokenIn: address(mockWETH),
+                tokenOut: address(mockUSDC),
+                amountOut: 0,
+                maxAmountIn: maxAmountIn,
+                recipient: user,
+                deadline: block.timestamp + 30 minutes,
+                route: abi.encode(uint24(3000))
+            })
+        );
+
+        vm.stopPrank();
+
+        assertEq(mockUSDC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+        assertEq(mockWETH.balanceOf(address(adapter)), 0);
+        assertEq(mockUSDC.balanceOf(address(adapter)), 0);
+        assertEq(mockWETH.allowance(address(adapter), address(router)), 0);
+    }
+
+    function test_swapExactOutput_singleHop_reverts_whenSameToken() public {
+        uint256 amountOut = 10_000e6;
+        uint256 routerAmountIn = 5 ether;
+        router.setExactOutputBehavior(routerAmountIn, routerAmountIn);
+        router.setShouldRevert(true);
+
+        uint256 maxAmountIn = 5 ether;
+
+        assertEq(mockUSDC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+
+        vm.startPrank(user);
+        mockWETH.approve(address(adapter), routerAmountIn);
+
+        vm.expectRevert(UniswapV3SwapAdapter.SameToken.selector);
+
+        adapter.swapExactOutput(
+            ISwapAdapter.ExactOutputParams({
+                tokenIn: address(mockWETH),
+                tokenOut: address(mockWETH),
+                amountOut: amountOut,
+                maxAmountIn: maxAmountIn,
+                recipient: user,
+                deadline: block.timestamp + 30 minutes,
+                route: abi.encode(uint24(3000))
+            })
+        );
+
+        vm.stopPrank();
+
+        assertEq(mockUSDC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+        assertEq(mockWETH.balanceOf(address(adapter)), 0);
+        assertEq(mockUSDC.balanceOf(address(adapter)), 0);
+        assertEq(mockWETH.allowance(address(adapter), address(router)), 0);
+    }
+
+    function test_swapExactOutput_singleHop_reverts_whenZeroMaxAmountIn() public {
+        uint256 amountOut = 10_000e6;
+        uint256 routerAmountIn = 5 ether;
+        router.setExactOutputBehavior(routerAmountIn, routerAmountIn);
+        router.setShouldRevert(true);
+
+        uint256 maxAmountIn = 5 ether;
+
+        assertEq(mockUSDC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+
+        vm.startPrank(user);
+        mockWETH.approve(address(adapter), routerAmountIn);
+
+        vm.expectRevert(UniswapV3SwapAdapter.ZeroMaxAmountIn.selector);
+
+        adapter.swapExactOutput(
+            ISwapAdapter.ExactOutputParams({
+                tokenIn: address(mockWETH),
+                tokenOut: address(mockUSDC),
+                amountOut: amountOut,
+                maxAmountIn: 0,
+                recipient: user,
+                deadline: block.timestamp + 30 minutes,
+                route: abi.encode(uint24(3000))
+            })
+        );
+
+        vm.stopPrank();
+
+        assertEq(mockUSDC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+        assertEq(mockWETH.balanceOf(address(adapter)), 0);
+        assertEq(mockUSDC.balanceOf(address(adapter)), 0);
+        assertEq(mockWETH.allowance(address(adapter), address(router)), 0);
+    }
+
+    function test_swapExactOutput_singleHop_reverts_whenExpiredSwap() public {
+        skip(1 days);
+        uint256 amountOut = 10_000e6;
+        uint256 routerAmountIn = 5 ether;
+        router.setExactOutputBehavior(routerAmountIn, routerAmountIn);
+        router.setShouldRevert(true);
+
+        uint256 maxAmountIn = 5 ether;
+
+        assertEq(mockUSDC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+
+        vm.startPrank(user);
+        mockWETH.approve(address(adapter), routerAmountIn);
+
+        vm.expectRevert(UniswapV3SwapAdapter.ExpiredSwap.selector);
+
+        adapter.swapExactOutput(
+            ISwapAdapter.ExactOutputParams({
+                tokenIn: address(mockWETH),
+                tokenOut: address(mockUSDC),
+                amountOut: amountOut,
+                maxAmountIn: maxAmountIn,
+                recipient: user,
+                deadline: block.timestamp - 30 minutes,
+                route: abi.encode(uint24(3000))
+            })
+        );
+
+        vm.stopPrank();
+
+        assertEq(mockUSDC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+        assertEq(mockWETH.balanceOf(address(adapter)), 0);
+        assertEq(mockUSDC.balanceOf(address(adapter)), 0);
+        assertEq(mockWETH.allowance(address(adapter), address(router)), 0);
+    }
+
+    function test_swapExactOutput_singleHop_reverts_whenInvalidRoute() public {
+        uint256 amountOut = 10_000e6;
+        uint256 routerAmountIn = 5 ether;
+        router.setExactOutputBehavior(routerAmountIn, routerAmountIn);
+        router.setShouldRevert(true);
+
+        uint256 maxAmountIn = 5 ether;
+        bytes memory invalidRoute = "0";
+
+        assertEq(mockUSDC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+
+        vm.startPrank(user);
+        mockWETH.approve(address(adapter), routerAmountIn);
+
+        vm.expectRevert(UniswapV3SwapAdapter.InvalidRoute.selector);
+
+        adapter.swapExactOutput(
+            ISwapAdapter.ExactOutputParams({
+                tokenIn: address(mockWETH),
+                tokenOut: address(mockUSDC),
+                amountOut: amountOut,
+                maxAmountIn: maxAmountIn,
+                recipient: user,
+                deadline: block.timestamp,
+                route: invalidRoute
+            })
+        );
+
+        vm.stopPrank();
+
+        assertEq(mockUSDC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+        assertEq(mockWETH.balanceOf(address(adapter)), 0);
+        assertEq(mockUSDC.balanceOf(address(adapter)), 0);
+        assertEq(mockWETH.allowance(address(adapter), address(router)), 0);
+    }
 }

@@ -22,8 +22,18 @@ contract MockUniswapV3SwapRouter is IUniswapV3SwapRouter {
     address public multihopTokenOut;
     bytes public lastPath;
 
+    uint256 public amountInToSpend;
+    uint256 public amountInToReturn;
+    uint256 public lastAmountOut;
+    uint256 public lastAmountInMaximum;
+
     function setAmountOut(uint256 _amountOut) external {
         amountOut = _amountOut;
+    }
+
+    function setExactOutputBehavior(uint256 spendAmount, uint256 returnAmount) external {
+        amountInToSpend = spendAmount;
+        amountInToReturn = returnAmount;
     }
 
     function setShouldRevert(bool value) external {
@@ -65,5 +75,22 @@ contract MockUniswapV3SwapRouter is IUniswapV3SwapRouter {
         IERC20(params.tokenOut).safeTransfer(params.recipient, amountOut);
 
         return amountOut;
+    }
+
+    function exactOutputSingle(ExactOutputSingleParams calldata params) external payable returns (uint256) {
+        if (shouldRevert) revert MockRouterRevert();
+
+        lastTokenIn = params.tokenIn;
+        lastTokenOut = params.tokenOut;
+        lastFee = params.fee;
+        lastRecipient = params.recipient;
+        lastAmountOut = params.amountOut;
+        lastAmountInMaximum = params.amountInMaximum;
+
+        IERC20(params.tokenIn).safeTransferFrom(msg.sender, address(this), amountInToSpend);
+
+        IERC20(params.tokenOut).safeTransfer(params.recipient, params.amountOut);
+
+        return amountInToReturn;
     }
 }

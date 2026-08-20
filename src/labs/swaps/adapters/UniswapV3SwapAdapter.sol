@@ -13,11 +13,14 @@ contract UniswapV3SwapAdapter is ISwapAdapter {
     error ZeroAddress();
     error ZeroAmountIn();
     error ZeroMinAmountOut();
+    error ZeroAmountOut();
+    error ZeroMaxAmountIn();
     error SameToken();
     error ExpiredSwap();
     error InvalidRoute();
     error InsufficientAmountOut(uint256 minimum, uint256 actual);
     error TokenMismatch();
+    error ExcessiveAmountIn(uint256 maximum, uint256 actual);
 
     address public immutable router;
 
@@ -79,6 +82,56 @@ contract UniswapV3SwapAdapter is ISwapAdapter {
         if (receivedAmount < params.minAmountOut) {
             revert InsufficientAmountOut(params.minAmountOut, receivedAmount);
         }
+    }
+
+    function swapExactOutput(ExactOutputParams calldata params) external returns (uint256 amountIn) {
+        _validateExactOutputParams(params);
+
+        require(params.route.length == 32, InvalidRoute());
+
+        uint24 fee = abi.decode(params.route, (uint24));
+
+        IERC20 tokenIn = IERC20(params.tokenIn);
+
+        TokenTransfer.pullExact(tokenIn, msg.sender, params.maxAmountIn);
+        tokenIn.forceApprove(router, params.maxAmountIn);
+
+        amountIn = IUniswapV3SwapRouter(router)
+            .exactOutputSingle(
+                IUniswapV3SwapRouter.ExactOutputSingleParams({
+                    tokenIn: params.tokenIn,
+                    tokenOut: params.tokenOut,
+                    fee: fee,
+                    recipient: params.recipient,
+                    deadline: params.deadline,
+                    amountOut: params.amountOut,
+                    amountInMaximum: params.maxAmountIn,
+                    sqrtPriceLimitX96: 0
+                })
+            );
+
+        tokenIn.forceApprove(router, 0);
+
+        if (amountIn > params.maxAmountIn) {
+            revert ExcessiveAmountIn(params.maxAmountIn, amountIn);
+        }
+
+        uint256 refund = params.maxAmountIn - amountIn;
+
+        if (refund > 0) {
+            TokenTransfer.pushExact(tokenIn, msg.sender, refund);
+        }
+    }
+
+    function _validateExactOutputParams(ExactOutputParams calldata params) internal view {
+        require(
+            params.tokenIn != address(0) && params.tokenOut != address(0) && params.recipient != address(0),
+            ZeroAddress()
+        );
+        require(params.tokenIn != params.tokenOut, SameToken());
+        require(params.amountOut > 0, ZeroAmountOut());
+        require(params.maxAmountIn > 0, ZeroMaxAmountIn());
+        require(params.deadline >= block.timestamp, ExpiredSwap());
     }
 
     function _validateExactInputParams(ExactInputParams calldata params) internal view {
