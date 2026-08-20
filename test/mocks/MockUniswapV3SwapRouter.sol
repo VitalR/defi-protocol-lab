@@ -77,6 +77,21 @@ contract MockUniswapV3SwapRouter is IUniswapV3SwapRouter {
         return amountOut;
     }
 
+    function exactOutput(ExactOutputParams calldata params) external payable returns (uint256) {
+        if (shouldRevert) revert MockRouterRevert();
+
+        lastPath = params.path;
+        lastRecipient = params.recipient;
+        lastAmountOut = params.amountOut;
+        lastAmountInMaximum = params.amountInMaximum;
+
+        IERC20(multihopTokenIn).safeTransferFrom(msg.sender, address(this), amountInToSpend);
+
+        IERC20(multihopTokenOut).safeTransfer(params.recipient, params.amountOut);
+
+        return amountInToReturn;
+    }
+
     function exactOutputSingle(ExactOutputSingleParams calldata params) external payable returns (uint256) {
         if (shouldRevert) revert MockRouterRevert();
 

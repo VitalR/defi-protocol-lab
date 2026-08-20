@@ -87,28 +87,50 @@ contract UniswapV3SwapAdapter is ISwapAdapter {
     function swapExactOutput(ExactOutputParams calldata params) external returns (uint256 amountIn) {
         _validateExactOutputParams(params);
 
-        require(params.route.length == 32, InvalidRoute());
+        bool isSingleHop = params.route.length == 32;
 
-        uint24 fee = abi.decode(params.route, (uint24));
+        if (!isSingleHop) {
+            _validateMultihopPath(params.route);
+
+            address tokenOut = _decodeFirstToken(params.route);
+            address tokenIn = _decodeLastToken(params.route);
+
+            require(tokenIn == params.tokenIn && tokenOut == params.tokenOut, TokenMismatch());
+        }
 
         IERC20 tokenIn = IERC20(params.tokenIn);
 
         TokenTransfer.pullExact(tokenIn, msg.sender, params.maxAmountIn);
         tokenIn.forceApprove(router, params.maxAmountIn);
 
-        amountIn = IUniswapV3SwapRouter(router)
-            .exactOutputSingle(
-                IUniswapV3SwapRouter.ExactOutputSingleParams({
-                    tokenIn: params.tokenIn,
-                    tokenOut: params.tokenOut,
-                    fee: fee,
-                    recipient: params.recipient,
-                    deadline: params.deadline,
-                    amountOut: params.amountOut,
-                    amountInMaximum: params.maxAmountIn,
-                    sqrtPriceLimitX96: 0
-                })
-            );
+        if (isSingleHop) {
+            uint24 fee = abi.decode(params.route, (uint24));
+
+            amountIn = IUniswapV3SwapRouter(router)
+                .exactOutputSingle(
+                    IUniswapV3SwapRouter.ExactOutputSingleParams({
+                        tokenIn: params.tokenIn,
+                        tokenOut: params.tokenOut,
+                        fee: fee,
+                        recipient: params.recipient,
+                        deadline: params.deadline,
+                        amountOut: params.amountOut,
+                        amountInMaximum: params.maxAmountIn,
+                        sqrtPriceLimitX96: 0
+                    })
+                );
+        } else {
+            amountIn = IUniswapV3SwapRouter(router)
+                .exactOutput(
+                    IUniswapV3SwapRouter.ExactOutputParams({
+                        path: params.route,
+                        recipient: params.recipient,
+                        deadline: params.deadline,
+                        amountOut: params.amountOut,
+                        amountInMaximum: params.maxAmountIn
+                    })
+                );
+        }
 
         tokenIn.forceApprove(router, 0);
 
@@ -157,19 +179,19 @@ contract UniswapV3SwapAdapter is ISwapAdapter {
         require((path.length - 20) % 23 == 0, InvalidRoute());
     }
 
-    function _decodeFirstToken(bytes calldata path) internal pure returns (address tokenIn) {
+    function _decodeFirstToken(bytes calldata path) internal pure returns (address token) {
         // Why shr(96, ...)?
         // calldataload reads 32 bytes:
         // [20 bytes address][12 bytes following data]
         // Shift right by 12 bytes (96 bits) to keep the leading 20-byte address.
         assembly {
-            tokenIn := shr(96, calldataload(path.offset))
+            token := shr(96, calldataload(path.offset))
         }
     }
 
-    function _decodeLastToken(bytes calldata path) internal pure returns (address tokenOut) {
+    function _decodeLastToken(bytes calldata path) internal pure returns (address token) {
         assembly {
-            tokenOut := shr(96, calldataload(add(path.offset, sub(path.length, 20))))
+            token := shr(96, calldataload(add(path.offset, sub(path.length, 20))))
         }
     }
 }

@@ -1167,4 +1167,216 @@ contract UniswapV3SwapAdapterTest is Test {
         assertEq(mockUSDC.balanceOf(address(adapter)), 0);
         assertEq(mockWETH.allowance(address(adapter), address(router)), 0);
     }
+
+    //=========SwapExactOutput=========
+    // Economic route:
+    // WETH → USDC → WBTC
+
+    // want exactly:
+    // 0.1 WBTC
+
+    // max input:
+    // 1.7 WETH
+
+    // router actually spends:
+    // 1.55 WETH
+
+    // refund:
+    // 0.15 WETH
+
+    function test_swapExactOutput_multihopPath() public {
+        uint256 amountOut = 0.1e8; // WBTC
+        uint256 maxAmountIn = 1.7 ether; // WETH
+
+        bytes memory route =
+            abi.encodePacked(address(mockWBTC), uint24(500), address(mockUSDC), uint24(3000), address(mockWETH));
+
+        router.setExactOutputBehavior(1.55 ether, 1.55 ether);
+        router.setMultihopTokens(address(mockWETH), address(mockWBTC));
+
+        assertEq(mockWBTC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+
+        vm.startPrank(user);
+        mockWETH.approve(address(adapter), maxAmountIn);
+
+        uint256 amountIn = adapter.swapExactOutput(
+            ISwapAdapter.ExactOutputParams({
+                tokenIn: address(mockWETH),
+                tokenOut: address(mockWBTC),
+                amountOut: 0.1e8,
+                maxAmountIn: 1.7 ether,
+                recipient: user,
+                deadline: block.timestamp + 30 minutes,
+                route: route
+            })
+        );
+
+        vm.stopPrank();
+
+        // Happy-path invariants
+
+        // amountIn returned = 1.55 WETH
+
+        // user WETH:
+        // 10 - 1.55 = 8.45 WETH
+
+        // user WBTC:
+        // +0.1 WBTC
+
+        // router WETH:
+        // +1.55 WETH
+
+        // adapter WETH:
+        // 0
+
+        // adapter WBTC:
+        // 0
+
+        // adapter → router allowance:
+        // 0
+
+        assertEq(amountIn, 1.55 ether);
+        assertEq(mockWBTC.balanceOf(user), amountOut);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance - 1.55 ether);
+        assertEq(mockWETH.balanceOf(address(router)), 1.55 ether);
+
+        assertEq(mockWETH.balanceOf(address(adapter)), 0);
+        assertEq(mockWBTC.balanceOf(address(adapter)), 0);
+
+        assertEq(mockWETH.allowance(address(adapter), address(router)), 0);
+
+        assertEq(router.lastRecipient(), user);
+        assertEq(router.lastAmountOut(), amountOut);
+        assertEq(router.lastAmountInMaximum(), maxAmountIn);
+    }
+
+    function test_swapExactOutput_multihopPath_reverts_whenTokenMismatch() public {
+        router.setExactOutputBehavior(1.55 ether, 1.55 ether);
+        router.setMultihopTokens(address(mockWETH), address(mockWBTC));
+
+        assertEq(mockWBTC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+
+        vm.startPrank(user);
+        mockWETH.approve(address(adapter), 1.7 ether);
+
+        vm.expectRevert(UniswapV3SwapAdapter.TokenMismatch.selector);
+
+        uint256 amountIn = adapter.swapExactOutput(
+            ISwapAdapter.ExactOutputParams({
+                tokenIn: address(mockUSDC),
+                tokenOut: address(mockWBTC),
+                amountOut: 0.1e8,
+                maxAmountIn: 1.7 ether,
+                recipient: user,
+                deadline: block.timestamp + 30 minutes,
+                route: abi.encodePacked(
+                    address(mockWBTC), uint24(500), address(mockUSDC), uint24(3000), address(mockWETH)
+                )
+            })
+        );
+
+        vm.stopPrank();
+
+        assertEq(mockWBTC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+    }
+
+    function test_swapExactOutput_multihopPath_reverts_whenInvalidRoute() public {
+        router.setExactOutputBehavior(1.55 ether, 1.55 ether);
+        router.setMultihopTokens(address(mockWETH), address(mockWBTC));
+
+        assertEq(mockWBTC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+
+        vm.startPrank(user);
+        mockWETH.approve(address(adapter), 1.7 ether);
+
+        vm.expectRevert(UniswapV3SwapAdapter.InvalidRoute.selector);
+
+        uint256 amountIn = adapter.swapExactOutput(
+            ISwapAdapter.ExactOutputParams({
+                tokenIn: address(mockWETH),
+                tokenOut: address(mockWBTC),
+                amountOut: 0.1e8,
+                maxAmountIn: 1.7 ether,
+                recipient: user,
+                deadline: block.timestamp + 30 minutes,
+                route: abi.encodePacked(
+                    address(mockWBTC), uint24(500), address(mockUSDC), uint32(3000), address(mockWETH)
+                )
+            })
+        );
+
+        vm.stopPrank();
+
+        assertEq(mockWBTC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+    }
+
+    function test_swapExactOutput_multihopPath_reverts_whenRouterRevert() public {
+        router.setExactOutputBehavior(1.55 ether, 1.55 ether);
+        router.setMultihopTokens(address(mockWETH), address(mockWBTC));
+        router.setShouldRevert(true);
+
+        assertEq(mockWBTC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+
+        vm.startPrank(user);
+        mockWETH.approve(address(adapter), 1.7 ether);
+
+        vm.expectRevert(MockUniswapV3SwapRouter.MockRouterRevert.selector);
+
+        uint256 amountIn = adapter.swapExactOutput(
+            ISwapAdapter.ExactOutputParams({
+                tokenIn: address(mockWETH),
+                tokenOut: address(mockWBTC),
+                amountOut: 0.1e8,
+                maxAmountIn: 1.7 ether,
+                recipient: user,
+                deadline: block.timestamp + 30 minutes,
+                route: abi.encodePacked(
+                    address(mockWBTC), uint24(500), address(mockUSDC), uint24(3000), address(mockWETH)
+                )
+            })
+        );
+
+        vm.stopPrank();
+
+        assertEq(mockWBTC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+    }
+
+    function test_swapExactOutput_multihopPath_reverts_whenExcessiveAmountIn() public {
+        router.setExactOutputBehavior(1.55 ether, 1.57 ether);
+        router.setMultihopTokens(address(mockWETH), address(mockWBTC));
+
+        assertEq(mockWBTC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+
+        vm.startPrank(user);
+        mockWETH.approve(address(adapter), 1.55 ether);
+
+        vm.expectRevert(abi.encodeWithSelector(UniswapV3SwapAdapter.ExcessiveAmountIn.selector, 1.55 ether, 1.57 ether));
+
+        uint256 amountIn = adapter.swapExactOutput(
+            ISwapAdapter.ExactOutputParams({
+                tokenIn: address(mockWETH),
+                tokenOut: address(mockWBTC),
+                amountOut: 0.1e8,
+                maxAmountIn: 1.55 ether,
+                recipient: user,
+                deadline: block.timestamp + 30 minutes,
+                route: abi.encodePacked(
+                    address(mockWBTC), uint24(500), address(mockUSDC), uint24(3000), address(mockWETH)
+                )
+            })
+        );
+
+        vm.stopPrank();
+
+        assertEq(mockWBTC.balanceOf(user), 0);
+        assertEq(mockWETH.balanceOf(user), initialETHBalance);
+    }
 }
