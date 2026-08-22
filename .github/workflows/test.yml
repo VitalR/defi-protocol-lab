@@ -12,9 +12,6 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  FOUNDRY_PROFILE: ci
-
 jobs:
   check:
     name: Format, build, test
@@ -31,7 +28,7 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: stable
+          version: forge 1.5.1-stable
 
       - name: Show tool versions
         run: |
