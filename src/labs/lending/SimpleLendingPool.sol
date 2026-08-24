@@ -104,4 +104,19 @@ contract SimpleLendingPool {
     function debtOf(address user) external view returns (uint256) {
         return _debtBalance[user];
     }
+
+    function healthFactor(address user) public view returns (uint256 hf) {
+        uint256 debt = _debtBalance[user];
+
+        if (debt == 0) return type(uint256).max;
+
+        uint256 debtValueWad =
+            DecimalMath.scale(debt, debtTokenDecimals, uint8(DecimalMath.WAD_DECIMALS), Math.Rounding.Ceil);
+
+        uint256 collateralValueWad = collateralValue(user);
+
+        uint256 adjustedCollateralWad = Math.mulDiv(collateralValueWad, LIQUIDATION_THRESHOLD, BPS, Math.Rounding.Floor);
+
+        return hf = DecimalMath.ratioWad(adjustedCollateralWad, debtValueWad, Math.Rounding.Trunc);
+    }
 }

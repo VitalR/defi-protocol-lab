@@ -402,4 +402,105 @@ contract SimpleLendingPoolTest is Test {
         assertEq(lending.debtOf(user), 1500e6);
         assertEq(lending.availableToBorrow(user), 0);
     }
+
+    function _openMaxBorrowPosition() internal {
+        _fundsPool();
+        _setLatestPriceOracle(2000e8);
+
+        vm.startPrank(user);
+        mockWETH.approve(address(lending), 1 ether);
+        lending.supplyCollateral(1 ether);
+        lending.borrow(1500e6);
+        vm.stopPrank();
+    }
+
+    function test_healthFactor_noDebt() public {
+        _fundsPool();
+        _setLatestPriceOracle(2000e8);
+
+        vm.startPrank(user);
+        mockWETH.approve(address(lending), 1 ether);
+        lending.supplyCollateral(1 ether);
+        vm.stopPrank();
+
+        assertEq(lending.collateralValue(user), 2000e18);
+        assertEq(lending.maxBorrow(user), 1500e6);
+
+        assertEq(lending.healthFactor(user), type(uint256).max);
+    }
+
+    function test_healthFactor_withDebt() public {
+        _openMaxBorrowPosition();
+
+        assertEq(lending.collateralValue(user), 2000e18);
+        assertEq(lending.maxBorrow(user), 1500e6);
+
+        assertGe(lending.healthFactor(user), 1_066_666_666_666_666_666);
+    }
+
+    function test_healthFactor_whenBorrowDisabledButStillHealthy() public {
+        _openMaxBorrowPosition();
+
+        assertEq(lending.collateralValue(user), 2000e18);
+        assertEq(lending.maxBorrow(user), 1500e6);
+
+        assertGt(lending.healthFactor(user), 1e18);
+
+        _setLatestPriceOracle(int256(1900e8));
+
+        assertEq(lending.maxBorrow(user), 1425e6);
+        assertEq(lending.debtOf(user), 1500e6);
+        assertEq(lending.availableToBorrow(user), 0);
+
+        // LTV capacity = 1425
+        // debt = 1500
+
+        // cannot borrow more
+        // but
+
+        // 1900 × 80% = 1520
+        // HF = 1520 / 1500 > 1
+
+        assertGt(lending.healthFactor(user), 1e18);
+    }
+
+    function test_healthFactor_whenExactLiquidationBoundary() public {
+        _openMaxBorrowPosition();
+
+        assertEq(lending.collateralValue(user), 2000e18);
+        assertEq(lending.maxBorrow(user), 1500e6);
+
+        assertGt(lending.healthFactor(user), 1e18);
+
+        _setLatestPriceOracle(int256(1875e8));
+
+        assertEq(lending.maxBorrow(user), 1_406_250_000);
+        assertEq(lending.debtOf(user), 1500e6);
+        assertEq(lending.availableToBorrow(user), 0);
+
+        // 1875 × 80% = 1500
+        // HF = 1
+
+        assertEq(lending.healthFactor(user), 1e18);
+    }
+
+    function test_healthFactor_liquidatable() public {
+        _openMaxBorrowPosition();
+
+        assertEq(lending.collateralValue(user), 2000e18);
+        assertEq(lending.maxBorrow(user), 1500e6);
+
+        assertGt(lending.healthFactor(user), 1e18);
+
+        _setLatestPriceOracle(int256(1800e8));
+
+        assertEq(lending.maxBorrow(user), 1_350_000_000);
+        assertEq(lending.debtOf(user), 1500e6);
+        assertEq(lending.availableToBorrow(user), 0);
+
+        // 1800 × 80% = 1440
+        // HF = 1440 / 1500 = 0.96
+
+        assertLt(lending.healthFactor(user), 1e18);
+    }
 }
