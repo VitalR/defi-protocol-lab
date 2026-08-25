@@ -21,6 +21,7 @@ contract SimpleLendingPoolTest is Test {
 
     event Supplied(address indexed user, address indexed collateralToken, uint256 amount);
     event Borrowed(address indexed user, address indexed debtToken, uint256 amount);
+    event Withdrawn(address indexed user, address indexed collateralToken, uint256 amount);
 
     function setUp() public {
         feed = new MockAggregatorV3(uint256(1), uint8(8), "MockAggregatorV3::ETH/USD");
@@ -502,5 +503,117 @@ contract SimpleLendingPoolTest is Test {
         // HF = 1440 / 1500 = 0.96
 
         assertLt(lending.healthFactor(user), 1e18);
+    }
+
+    function test_withdraw_noDebt_fullCollateralWithdrawalSucceeds() public {
+        _supply(user, 1 ether);
+
+        assertEq(lending.collateralOf(user), 1 ether);
+        assertEq(lending.debtOf(user), 0);
+
+        assertEq(lending.healthFactor(user), type(uint256).max);
+
+        vm.prank(user);
+        vm.expectEmit(true, true, true, true);
+        emit Withdrawn(user, address(mockWETH), 1 ether);
+        lending.withdrawCollateral(1 ether);
+
+        assertEq(lending.collateralOf(user), 0);
+        assertEq(lending.debtOf(user), 0);
+
+        assertEq(lending.healthFactor(user), type(uint256).max);
+    }
+
+    function test_withdraw_partialWithdrawalUpdateAccounting() public {
+        _fundsPool();
+        _setLatestPriceOracle(2000e8);
+
+        vm.startPrank(user);
+        mockWETH.approve(address(lending), 1 ether);
+        lending.supplyCollateral(1 ether);
+        lending.borrow(1000e6);
+
+        assertEq(lending.collateralOf(user), 1 ether);
+        assertEq(lending.debtOf(user), 1000e6);
+
+        // adjusted collateral = 2000 × 0.8 = 1600
+        // HF = 1600 / 1000 = 1.6
+        assertEq(lending.healthFactor(user), 1.6e18);
+        assertEq(lending.availableToBorrow(user), 500e6);
+
+        lending.withdrawCollateral(0.25 ether);
+
+        assertEq(lending.collateralOf(user), 0.75 ether);
+        assertEq(lending.debtOf(user), 1000e6);
+
+        assertEq(mockWETH.balanceOf(user), 9.25 ether);
+        assertEq(mockWETH.balanceOf(address(lending)), 0.75 ether);
+
+        // Remaining: 0.75 WETH = $1500
+        // Adjusted: 1500 × 80% = $1200
+        // HF: 1200 / 1000 = 1.2
+        assertEq(lending.healthFactor(user), 1.2e18);
+        assertEq(lending.availableToBorrow(user), 125e6);
+
+        lending.withdrawCollateral(0.125 ether);
+
+        // Remaining: 0.625 WETH = $1250
+        // Adjusted: 1250 × 80% = $1000
+        // HF: 1.0
+        assertEq(lending.healthFactor(user), 1e18);
+        assertEq(lending.availableToBorrow(user), 0);
+
+        assertEq(mockWETH.balanceOf(user), 9.375 ether);
+        assertEq(mockWETH.balanceOf(address(lending)), 0.625 ether);
+
+        // Withdraw one wei more
+        vm.expectRevert(abi.encodeWithSelector(SimpleLendingPool.UnhealthyPosition.selector, 999_999_999_999_999_998));
+        lending.withdrawCollateral(1 wei);
+
+        vm.stopPrank();
+
+        assertEq(lending.collateralOf(user), 0.625 ether);
+        assertEq(lending.debtOf(user), 1000e6);
+
+        assertEq(mockWETH.balanceOf(user), 9.375 ether);
+        assertEq(mockWETH.balanceOf(address(lending)), 0.625 ether);
+
+        assertEq(lending.healthFactor(user), 1e18);
+    }
+
+    function test_withdraw_revertsWhenAmountIsZero() public {
+        _supply(user, 1 ether);
+
+        assertEq(lending.collateralOf(user), 1 ether);
+        assertEq(lending.debtOf(user), 0);
+
+        assertEq(lending.healthFactor(user), type(uint256).max);
+
+        vm.prank(user);
+        vm.expectRevert(SimpleLendingPool.ZeroAmount.selector);
+        lending.withdrawCollateral(0 ether);
+
+        assertEq(lending.collateralOf(user), 1 ether);
+        assertEq(lending.debtOf(user), 0);
+
+        assertEq(lending.healthFactor(user), type(uint256).max);
+    }
+
+    function test_withdraw_revertsWhenAmountExceedsCollateral() public {
+        _supply(user, 1 ether);
+
+        assertEq(lending.collateralOf(user), 1 ether);
+        assertEq(lending.debtOf(user), 0);
+
+        assertEq(lending.healthFactor(user), type(uint256).max);
+
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(SimpleLendingPool.InsufficientCollateral.selector, 1.1 ether, 1 ether));
+        lending.withdrawCollateral(1.1 ether);
+
+        assertEq(lending.collateralOf(user), 1 ether);
+        assertEq(lending.debtOf(user), 0);
+
+        assertEq(lending.healthFactor(user), type(uint256).max);
     }
 }

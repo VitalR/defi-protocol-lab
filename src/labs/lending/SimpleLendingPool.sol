@@ -10,9 +10,12 @@ contract SimpleLendingPool {
     error ZeroAddress();
     error ZeroAmount();
     error BorrowCapacityExceeded(uint256 requestedDebt, uint256 maxDebt);
+    error InsufficientCollateral(uint256 requested, uint256 available);
+    error UnhealthyPosition(uint256 healthFactor);
 
     event Supplied(address indexed user, address indexed collateralToken, uint256 amount);
     event Borrowed(address indexed user, address indexed debtToken, uint256 amount);
+    event Withdrawn(address indexed user, address indexed collateralToken, uint256 amount);
 
     IERC20 public immutable collateralToken; // WETH
     IERC20 public immutable debtToken; // USDC
@@ -118,5 +121,23 @@ contract SimpleLendingPool {
         uint256 adjustedCollateralWad = Math.mulDiv(collateralValueWad, LIQUIDATION_THRESHOLD, BPS, Math.Rounding.Floor);
 
         return hf = DecimalMath.ratioWad(adjustedCollateralWad, debtValueWad, Math.Rounding.Trunc);
+    }
+
+    function withdrawCollateral(uint256 amount) external {
+        require(amount > 0, ZeroAmount());
+
+        uint256 collateralBefore = _collateralBalance[msg.sender];
+
+        require(amount <= collateralBefore, InsufficientCollateral(amount, collateralBefore));
+
+        _collateralBalance[msg.sender] = collateralBefore - amount;
+
+        uint256 hf = healthFactor(msg.sender);
+
+        require(hf >= 1e18, UnhealthyPosition(hf));
+
+        TokenTransfer.pushExact(collateralToken, msg.sender, amount);
+
+        emit Withdrawn(msg.sender, address(collateralToken), amount);
     }
 }
