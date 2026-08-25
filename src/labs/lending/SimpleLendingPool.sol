@@ -12,10 +12,12 @@ contract SimpleLendingPool {
     error BorrowCapacityExceeded(uint256 requestedDebt, uint256 maxDebt);
     error InsufficientCollateral(uint256 requested, uint256 available);
     error UnhealthyPosition(uint256 healthFactor);
+    error CurrentDebtExceeded(uint256 requestedRepay, uint256 currectDebt);
 
     event Supplied(address indexed user, address indexed collateralToken, uint256 amount);
     event Borrowed(address indexed user, address indexed debtToken, uint256 amount);
     event Withdrawn(address indexed user, address indexed collateralToken, uint256 amount);
+    event Repaid(address indexed user, address indexed debtToken, uint256 amount);
 
     IERC20 public immutable collateralToken; // WETH
     IERC20 public immutable debtToken; // USDC
@@ -139,5 +141,19 @@ contract SimpleLendingPool {
         TokenTransfer.pushExact(collateralToken, msg.sender, amount);
 
         emit Withdrawn(msg.sender, address(collateralToken), amount);
+    }
+
+    function repay(uint256 amount) external {
+        require(amount > 0, ZeroAmount());
+
+        uint256 currentDebt = _debtBalance[msg.sender];
+
+        require(amount <= currentDebt, CurrentDebtExceeded(amount, currentDebt));
+
+        TokenTransfer.pullExact(debtToken, msg.sender, amount);
+
+        _debtBalance[msg.sender] = currentDebt - amount;
+
+        emit Repaid(msg.sender, address(debtToken), amount);
     }
 }
