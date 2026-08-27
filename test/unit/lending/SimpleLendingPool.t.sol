@@ -9,6 +9,7 @@ import { TokenTransfer, IERC20 } from "src/common/token/TokenTransfer.sol";
 import { MockFeeOnTransferERC20 } from "test/mocks/MockFeeOnTransferERC20.sol";
 import { MockWETH } from "test/mocks/MockWETH.sol";
 import { MockUSDC } from "test/mocks/MockUSDC.sol";
+import { DecimalMath, Math } from "src/common/math/DecimalMath.sol";
 
 contract SimpleLendingPoolTest is Test {
     SimpleLendingPool lending;
@@ -23,6 +24,9 @@ contract SimpleLendingPoolTest is Test {
     event Borrowed(address indexed user, address indexed debtToken, uint256 amount);
     event Withdrawn(address indexed user, address indexed collateralToken, uint256 amount);
     event Repaid(address indexed user, address indexed debtToken, uint256 amount);
+    event Liquidated(
+        address indexed liquidator, address indexed borrower, uint256 debtToRepay, uint256 collateralToSeize
+    );
 
     function setUp() public {
         feed = new MockAggregatorV3(uint256(1), uint8(8), "MockAggregatorV3::ETH/USD");
@@ -756,5 +760,326 @@ contract SimpleLendingPoolTest is Test {
         assertEq(lending.debtOf(user), 1500e6);
 
         assertEq(lending.healthFactor(user), originalHF);
+    }
+
+    // | Operation         | Risk effect | Constraint                    |
+    // | ----------------- | ----------- | ----------------------------- |
+    // | Supply collateral | improves    | exact custody                 |
+    // | Borrow            | worsens     | resulting debt ≤ LTV capacity |
+    // | Repay             | improves    | repayment ≤ current debt      |
+    // | Withdraw          | worsens     | resulting HF ≥ 1              |
+    // | Price drop        | worsens     | may move HF below 1           |
+
+    function test_maxLiquidatableDebt() public {
+        _openMaxBorrowPosition();
+
+        assertEq(lending.collateralOf(user), 1 ether);
+        assertEq(lending.debtOf(user), 1500e6);
+
+        assertEq(lending.maxLiquidatableDebt(user), 750e6);
+
+        _setLatestPriceOracle(1800e8);
+
+        assertEq(lending.maxLiquidatableDebt(user), 750e6);
+    }
+
+    function test_maxLiquidatableDebt_revertsWhenZeroAddress() public {
+        _openMaxBorrowPosition();
+
+        assertEq(lending.collateralOf(user), 1 ether);
+        assertEq(lending.debtOf(user), 1500e6);
+
+        _setLatestPriceOracle(1800e8);
+
+        vm.expectRevert(SimpleLendingPool.ZeroAddress.selector);
+        lending.maxLiquidatableDebt(address(0));
+    }
+
+    function test_collateralToSeize() public {
+        _openMaxBorrowPosition();
+
+        assertEq(lending.collateralOf(user), 1 ether);
+        assertEq(lending.debtOf(user), 1500e6);
+
+        _setLatestPriceOracle(1800e8);
+
+        assertEq(lending.collateralToSeize(750e6), 0.4375 ether);
+    }
+
+    function test_collateralToSeize_revertsWhenZeroAmount() public {
+        _openMaxBorrowPosition();
+
+        assertEq(lending.collateralOf(user), 1 ether);
+        assertEq(lending.debtOf(user), 1500e6);
+
+        _setLatestPriceOracle(1800e8);
+
+        vm.expectRevert(SimpleLendingPool.ZeroAmount.selector);
+        lending.collateralToSeize(0);
+    }
+
+    function test_collateralToSeize_includesLiquidationBonus() public {
+        _openMaxBorrowPosition();
+
+        assertEq(lending.collateralOf(user), 1 ether);
+        assertEq(lending.debtOf(user), 1500e6);
+
+        _setLatestPriceOracle(1800e8);
+
+        uint256 seizeValueWadWithoutBonus = Math.mulDiv(750e18, 500, 10_000, Math.Rounding.Trunc);
+
+        uint256 collateralAmountWithoutBonus =
+            Math.mulDiv(seizeValueWadWithoutBonus, 10 ** 18, 1800e18, Math.Rounding.Floor);
+
+        uint256 collateralAmount = lending.collateralToSeize(750e6);
+
+        assertGt(collateralAmount, collateralAmountWithoutBonus);
+    }
+
+    // Canonical case:
+    // Alice:
+    // 1 WETH collateral
+    // 1500 USDC debt
+
+    // ETH:
+    // $2000 → $1800
+
+    // HF:
+    // 1.0667 → 0.96
+
+    // Liquidator repays:
+    // 750 USDC
+
+    // Seizes:
+    // 0.4375 WETH
+
+    // After liquidation:
+    // borrower debt:
+    // 1500 → 750 USDC
+
+    // borrower collateral:
+    // 1 → 0.5625 WETH
+
+    // And:
+    // liquidator:
+    // USDC -750
+    // WETH +0.4375
+
+    // Pool:
+    // USDC +750
+    // WETH -0.4375
+
+    // new HF = 1.08
+    function test_liquidate() public {
+        _openMaxBorrowPosition();
+
+        assertEq(lending.collateralOf(user), 1 ether);
+        assertEq(lending.debtOf(user), 1500e6);
+
+        _setLatestPriceOracle(1800e8);
+
+        uint256 hfBefor = lending.healthFactor(user);
+
+        assertEq(hfBefor, 960_000_000_000_000_000);
+
+        uint256 debtToRepay = lending.maxLiquidatableDebt(user);
+        uint256 collateralAmount = lending.collateralToSeize(debtToRepay);
+
+        uint256 poolDebtBalanceBefore = mockUSDC.balanceOf(address(lending));
+
+        address liquidator = address(0x1002);
+        mockUSDC.mint(liquidator, 1000e6);
+
+        uint256 debtBalanceBefore = mockUSDC.balanceOf(liquidator);
+        uint256 collateralBalanceBefore = mockWETH.balanceOf(liquidator);
+
+        vm.startPrank(liquidator);
+        mockUSDC.approve(address(lending), debtToRepay);
+
+        vm.expectEmit(true, true, true, true);
+        emit Liquidated(liquidator, user, debtToRepay, collateralAmount);
+        lending.liquidate(user, debtToRepay);
+        vm.stopPrank();
+
+        assertEq(lending.collateralOf(user), 1 ether - collateralAmount);
+        assertEq(lending.debtOf(user), 1500e6 - debtToRepay);
+
+        assertEq(mockUSDC.balanceOf(liquidator), debtBalanceBefore - debtToRepay);
+        assertEq(mockWETH.balanceOf(liquidator), collateralBalanceBefore + collateralAmount);
+
+        assertEq(mockWETH.balanceOf(address(lending)), 1 ether - collateralAmount);
+        assertEq(mockUSDC.balanceOf(address(lending)), poolDebtBalanceBefore + debtToRepay);
+
+        uint256 hfAfter = lending.healthFactor(user);
+
+        assertGt(hfAfter, hfBefor);
+
+        // When ETH $1800:
+        // collateral value = 0.5625 × 1800
+        //          = 1012.5
+
+        // adjusted collateral = 1012.5 × 80%
+        //                     = 810
+
+        // HF = 810 / 750
+        // = 1.08
+        assertEq(hfAfter, 1_080_000_000_000_000_000);
+    }
+
+    function test_liquidate_revertsWhenZeroAddress() public {
+        _openMaxBorrowPosition();
+
+        assertEq(lending.collateralOf(user), 1 ether);
+        assertEq(lending.debtOf(user), 1500e6);
+
+        _setLatestPriceOracle(1800e8);
+
+        assertEq(lending.healthFactor(user), 960_000_000_000_000_000);
+
+        address liquidator = address(0x1002);
+        mockUSDC.mint(liquidator, 1000e6);
+
+        vm.startPrank(liquidator);
+        mockUSDC.approve(address(lending), 1000e6);
+
+        vm.expectRevert(SimpleLendingPool.ZeroAddress.selector);
+        lending.liquidate(address(0), uint256(750e6));
+        vm.stopPrank();
+
+        assertEq(lending.collateralOf(user), 1 ether);
+        assertEq(lending.debtOf(user), 1500e6);
+        assertEq(lending.healthFactor(user), 960_000_000_000_000_000);
+    }
+
+    function test_liquidate_revertsWhenZeroAmount() public {
+        _openMaxBorrowPosition();
+
+        assertEq(lending.collateralOf(user), 1 ether);
+        assertEq(lending.debtOf(user), 1500e6);
+
+        _setLatestPriceOracle(1800e8);
+
+        address liquidator = address(0x1002);
+        mockUSDC.mint(liquidator, 1000e6);
+
+        vm.startPrank(liquidator);
+        mockUSDC.approve(address(lending), 1000e6);
+
+        vm.expectRevert(SimpleLendingPool.ZeroAmount.selector);
+        lending.liquidate(user, 0);
+        vm.stopPrank();
+
+        assertEq(lending.collateralOf(user), 1 ether);
+        assertEq(lending.debtOf(user), 1500e6);
+        assertEq(lending.healthFactor(user), 960_000_000_000_000_000);
+    }
+
+    function test_liquidate_revertsWhenPositionNotLiquidatable() public {
+        _openMaxBorrowPosition();
+
+        assertEq(lending.collateralOf(user), 1 ether);
+        assertEq(lending.debtOf(user), 1500e6);
+
+        assertEq(lending.healthFactor(user), 1_066_666_666_666_666_666);
+
+        address liquidator = address(0x1002);
+        mockUSDC.mint(liquidator, 1000e6);
+
+        vm.startPrank(liquidator);
+        mockUSDC.approve(address(lending), 1000e6);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(SimpleLendingPool.PositionNotLiquidatable.selector, 1_066_666_666_666_666_666)
+        );
+        lending.liquidate(user, 750e6);
+        vm.stopPrank();
+
+        assertEq(lending.collateralOf(user), 1 ether);
+        assertEq(lending.debtOf(user), 1500e6);
+        assertEq(lending.healthFactor(user), 1_066_666_666_666_666_666);
+    }
+
+    function test_liquidate_revertsWhenDebtToRepayExceedsMaxLiquidatableDebt() public {
+        _openMaxBorrowPosition();
+
+        assertEq(lending.collateralOf(user), 1 ether);
+        assertEq(lending.debtOf(user), 1500e6);
+
+        _setLatestPriceOracle(1800e8);
+
+        address liquidator = address(0x1002);
+        mockUSDC.mint(liquidator, 1000e6);
+
+        vm.startPrank(liquidator);
+        mockUSDC.approve(address(lending), 1000e6);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(SimpleLendingPool.DebtToRepayExceedsMaxLiquidatableDebt.selector, 751e6, 750e6)
+        );
+        lending.liquidate(user, 751e6);
+        vm.stopPrank();
+
+        assertEq(lending.collateralOf(user), 1 ether);
+        assertEq(lending.debtOf(user), 1500e6);
+        assertEq(lending.healthFactor(user), 960_000_000_000_000_000);
+    }
+
+    // collateral exhaustion / bad-debt territory
+    function test_liquidate_revertsWhenCollateralToSeizeExceedsBorrowerCollateral() public {
+        _openMaxBorrowPosition();
+
+        _setLatestPriceOracle(700e8);
+
+        assertLt(lending.healthFactor(user), 1e18);
+
+        uint256 debtToRepay = lending.maxLiquidatableDebt(user);
+        assertEq(debtToRepay, 750e6);
+
+        uint256 collateralAmountToSeize = lending.collateralToSeize(debtToRepay);
+
+        assertEq(collateralAmountToSeize, 1.125 ether);
+        assertGt(collateralAmountToSeize, lending.collateralOf(user));
+
+        address liquidator = address(0x1002);
+        mockUSDC.mint(liquidator, debtToRepay);
+
+        vm.startPrank(liquidator);
+        mockUSDC.approve(address(lending), debtToRepay);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                SimpleLendingPool.SeizeMoreThanBorrowerOwns.selector, collateralAmountToSeize, 1 ether
+            )
+        );
+
+        lending.liquidate(user, debtToRepay);
+
+        vm.stopPrank();
+
+        assertEq(lending.collateralOf(user), 1 ether);
+        assertEq(lending.debtOf(user), 1500e6);
+    }
+
+    function test_liquidate_revertsWhenInsufficientLiquidatorFundsAllowanceRollback() public {
+        _openMaxBorrowPosition();
+
+        assertEq(lending.collateralOf(user), 1 ether);
+        assertEq(lending.debtOf(user), 1500e6);
+
+        _setLatestPriceOracle(1800e8);
+
+        address liquidator = address(0x1002);
+        mockUSDC.mint(liquidator, 1000e6);
+
+        vm.startPrank(liquidator);
+        mockUSDC.approve(address(lending), 749e6);
+
+        vm.expectRevert(); //AllowanceIsInsufficient
+        lending.liquidate(user, 750e6);
+        vm.stopPrank();
+
+        assertEq(lending.collateralOf(user), 1 ether);
+        assertEq(lending.debtOf(user), 1500e6);
+        assertEq(lending.healthFactor(user), 960_000_000_000_000_000);
     }
 }
