@@ -54,4 +54,16 @@ contract InterestRateModelTest is Test {
         vm.expectRevert(abi.encodeWithSelector(InterestRateModel.InvalidUtilization.selector, 1.1e18));
         rateModel.supplyRate(1.1e18, 0.1e18);
     }
+
+    function test_accruedSimpleInterest() public {
+        assertEq(rateModel.accruedSimpleInterest(1000e6, 0.1e18, 0), 0);
+        assertEq(rateModel.accruedSimpleInterest(1000e6, 0, 365 days), 0);
+        assertEq(rateModel.accruedSimpleInterest(0, 0.1e18, 365 days), 0);
+
+        assertEq(rateModel.accruedSimpleInterest(1000e6, 0.1e18, 365 days), 100e6);
+
+        assertEq(rateModel.accruedSimpleInterest(1000e6, 0.1e18, 182.5 days), 50e6);
+
+        assertEq(rateModel.accruedSimpleInterest(1000e6, 0.05e18, 30 days), 4_109_589);
+    }
 }

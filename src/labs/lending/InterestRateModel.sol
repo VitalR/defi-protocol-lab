@@ -11,6 +11,7 @@ contract InterestRateModel {
     uint256 public constant SLOPE2 = 0.75e18; // 75%; slope2 - post-kink slope
     uint256 public constant OPTIMAL_UTILIZATION = 0.8e18; // 80%
     uint256 public constant RESERVE_FACTOR = 0.1e18; // 10%
+    uint256 public constant SECONDS_PER_YEAR = 365 days;
 
     // U = totalDebt / (availableLiquidity + totalDebt)
     function utilization(uint256 availableLiquidity, uint256 totalDebt) public pure returns (uint256 utilizationWad) {
@@ -94,5 +95,25 @@ contract InterestRateModel {
 
         // 3. netSupplyRate = grossSupplyRate × supplierShare
         return netSupplyRate = Math.mulDiv(grossSupplyRate, supplierShare, 1e18, Math.Rounding.Trunc);
+    }
+
+    // Simple linear interest approximation.
+    // Interest is first annualized, then prorated by elapsed time.
+    // Intermediate truncation may slightly understate accrued interest.
+    function accruedSimpleInterest(uint256 principal, uint256 annualRateWad, uint256 elapsedSeconds)
+        public
+        pure
+        returns (uint256 interest)
+    {
+        if (principal == 0 || annualRateWad == 0 || elapsedSeconds == 0) return 0;
+
+        // interest =
+        // principal
+        // × annualRateWad / 1e18
+        // × elapsedSeconds / SECONDS_PER_YEAR
+
+        uint256 grossInterest = Math.mulDiv(principal, annualRateWad, 1e18, Math.Rounding.Trunc);
+
+        return Math.mulDiv(grossInterest, elapsedSeconds, SECONDS_PER_YEAR, Math.Rounding.Trunc);
     }
 }
