@@ -3,6 +3,7 @@ pragma solidity ^0.8.35;
 
 import { Test } from "@forge-std/Test.sol";
 import { SimpleLendingPool } from "src/labs/lending/SimpleLendingPool.sol";
+import { InterestRateModel } from "src/labs/lending/InterestRateModel.sol";
 import { PushOracleAdapter } from "src/labs/oracles/PushOracleAdapter.sol";
 import { MockAggregatorV3 } from "test/mocks/MockAggregatorV3.sol";
 import { TokenTransfer, IERC20 } from "src/common/token/TokenTransfer.sol";
@@ -13,6 +14,7 @@ import { DecimalMath, Math } from "src/common/math/DecimalMath.sol";
 
 contract SimpleLendingPoolTest is Test {
     SimpleLendingPool lending;
+    InterestRateModel rateModel;
     PushOracleAdapter adapter;
     MockAggregatorV3 feed;
     MockWETH mockWETH;
@@ -31,30 +33,37 @@ contract SimpleLendingPoolTest is Test {
     function setUp() public {
         feed = new MockAggregatorV3(uint256(1), uint8(8), "MockAggregatorV3::ETH/USD");
         adapter = new PushOracleAdapter(address(feed), bytes32("ETH"), bytes32("USD"), 1 hours);
+        rateModel = new InterestRateModel();
 
         mockWETH = new MockWETH();
         mockUSDC = new MockUSDC();
 
         mockWETH.mint(user, 10 ether);
 
-        lending = new SimpleLendingPool(address(mockWETH), address(mockUSDC), address(adapter));
+        lending = new SimpleLendingPool(address(mockWETH), address(mockUSDC), address(adapter), address(rateModel));
     }
 
     function test_deployment_configuration() public {
         assertEq(address(lending.collateralToken()), address(mockWETH));
         assertEq(address(lending.debtToken()), address(mockUSDC));
         assertEq(address(lending.oracle()), address(adapter));
+        assertEq(address(lending.interestRateModel()), address(rateModel));
+        assertEq(lending.borrowIndex(), 1e18);
+        assertEq(lending.lastInterestUpdate(), block.timestamp);
     }
 
     function test_deployment_configuration_reverts() public {
         vm.expectRevert(SimpleLendingPool.ZeroAddress.selector);
-        new SimpleLendingPool(address(0), address(mockUSDC), address(adapter));
+        new SimpleLendingPool(address(0), address(mockUSDC), address(adapter), address(rateModel));
 
         vm.expectRevert(SimpleLendingPool.ZeroAddress.selector);
-        new SimpleLendingPool(address(mockWETH), address(0), address(adapter));
+        new SimpleLendingPool(address(mockWETH), address(0), address(adapter), address(rateModel));
 
         vm.expectRevert(SimpleLendingPool.ZeroAddress.selector);
-        new SimpleLendingPool(address(mockWETH), address(mockUSDC), address(0));
+        new SimpleLendingPool(address(mockWETH), address(mockUSDC), address(0), address(rateModel));
+
+        vm.expectRevert(SimpleLendingPool.ZeroAddress.selector);
+        new SimpleLendingPool(address(mockWETH), address(mockUSDC), address(adapter), address(0));
     }
 
     function test_supplyCollateral_pullsExactAmount() public {
@@ -73,6 +82,7 @@ contract SimpleLendingPoolTest is Test {
         assertEq(mockWETH.balanceOf(user), 9 ether);
         assertEq(lending.collateralOf(user), 1 ether);
         assertEq(mockWETH.balanceOf(address(lending)), 1 ether);
+        assertEq(lending.totalDebt(), 0);
     }
 
     function test_supplyCollateral_reverts_whenAmountIsZero() public {
@@ -145,7 +155,8 @@ contract SimpleLendingPoolTest is Test {
         MockFeeOnTransferERC20 feeToken = new MockFeeOnTransferERC20(user, fee);
         feeToken.mint(user2, 10 ether);
 
-        SimpleLendingPool lending2 = new SimpleLendingPool(address(feeToken), address(mockUSDC), address(adapter));
+        SimpleLendingPool lending2 =
+            new SimpleLendingPool(address(feeToken), address(mockUSDC), address(adapter), address(rateModel));
 
         assertEq(IERC20(feeToken).balanceOf(user2), 10 ether);
         assertEq(lending2.collateralOf(user2), 0);
@@ -245,6 +256,7 @@ contract SimpleLendingPoolTest is Test {
         assertEq(lending.availableToBorrow(user), lending.maxBorrow(user) - borrowAmount);
         assertEq(lending.collateralValue(user), 2000e18);
         assertEq(lending.maxBorrow(user), 1500e6);
+        assertEq(lending.totalDebt(), borrowAmount);
     }
 
     function test_borrow_reverts_whenBorrowCapacityExceeded() public {
@@ -266,6 +278,7 @@ contract SimpleLendingPoolTest is Test {
         uint256 maxBorrow = lending.maxBorrow(user);
         uint256 borrowAmount = maxBorrow + 1; //1501e6
         assertEq(lending.debtOf(user), 0);
+        assertEq(lending.totalDebt(), 0);
 
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -317,6 +330,7 @@ contract SimpleLendingPoolTest is Test {
         assertEq(mockUSDC.balanceOf(user), borrowAmount1 + borrowAmount2);
         assertEq(mockUSDC.balanceOf(address(lending)), 10_000e6 - borrowAmount1 - borrowAmount2);
         assertEq(lending.debtOf(user), borrowAmount1 + borrowAmount2);
+        assertEq(lending.totalDebt(), borrowAmount1 + borrowAmount2);
     }
 
     function test_borrow_reverts_whenCumulativeDebtExceedsCapacity() public {
@@ -367,6 +381,7 @@ contract SimpleLendingPoolTest is Test {
         assertEq(mockUSDC.balanceOf(user), borrowAmount1);
         assertEq(mockUSDC.balanceOf(address(lending)), 10_000e6 - borrowAmount1);
         assertEq(lending.debtOf(user), borrowAmount1);
+        assertEq(lending.totalDebt(), borrowAmount1);
     }
 
     function test_maxBorrow_returnsDebtTokenNativeUnits() public {
@@ -646,6 +661,7 @@ contract SimpleLendingPoolTest is Test {
 
         assertEq(lending.collateralOf(user), 1 ether);
         assertEq(lending.debtOf(user), 1500e6);
+        assertEq(lending.totalDebt(), 1500e6);
 
         assertEq(lending.healthFactor(user), 1_066_666_666_666_666_666);
 
@@ -662,6 +678,7 @@ contract SimpleLendingPoolTest is Test {
 
         assertEq(lending.collateralOf(user), 1 ether);
         assertEq(lending.debtOf(user), 0);
+        assertEq(lending.totalDebt(), 0);
 
         assertEq(mockUSDC.balanceOf(address(lending)), poolBalanceBefore + 1500e6);
 
@@ -692,6 +709,7 @@ contract SimpleLendingPoolTest is Test {
 
         assertEq(lending.collateralOf(user), 1 ether);
         assertEq(lending.debtOf(user), 500e6);
+        assertEq(lending.totalDebt(), 500e6);
 
         assertEq(lending.healthFactor(user), 3_200_000_000_000_000_000);
     }
@@ -713,6 +731,7 @@ contract SimpleLendingPoolTest is Test {
 
         assertEq(lending.collateralOf(user), 1 ether);
         assertEq(lending.debtOf(user), 1500e6);
+        assertEq(lending.totalDebt(), 1500e6);
 
         assertEq(lending.healthFactor(user), 1_066_666_666_666_666_666);
     }
@@ -758,8 +777,35 @@ contract SimpleLendingPoolTest is Test {
 
         assertEq(lending.collateralOf(user), 1 ether);
         assertEq(lending.debtOf(user), 1500e6);
+        assertEq(lending.totalDebt(), 1500e6);
 
         assertEq(lending.healthFactor(user), originalHF);
+    }
+
+    function test_repay_revertsWhenDebtReductionTooSmall() public {
+        _openMaxBorrowPosition();
+
+        assertEq(lending.collateralOf(user), 1 ether);
+        assertEq(lending.debtOf(user), 1500e6);
+
+        // Make the current borrow index greater than 1e18.
+        skip(365 days);
+
+        uint256 debtBefore = lending.debtOf(user);
+
+        assertGt(lending.currentBorrowIndex(), 1e18);
+        assertGt(debtBefore, 1500e6);
+
+        vm.startPrank(user);
+        mockUSDC.approve(address(lending), 1);
+
+        vm.expectRevert(abi.encodeWithSelector(SimpleLendingPool.DebtReductionTooSmall.selector, 1));
+
+        lending.repay(1);
+
+        vm.stopPrank();
+
+        assertEq(lending.debtOf(user), debtBefore);
     }
 
     // | Operation         | Risk effect | Constraint                    |
@@ -903,6 +949,7 @@ contract SimpleLendingPoolTest is Test {
 
         assertEq(lending.collateralOf(user), 1 ether - collateralAmount);
         assertEq(lending.debtOf(user), 1500e6 - debtToRepay);
+        assertEq(lending.totalDebt(), 1500e6 - debtToRepay);
 
         assertEq(mockUSDC.balanceOf(liquidator), debtBalanceBefore - debtToRepay);
         assertEq(mockWETH.balanceOf(liquidator), collateralBalanceBefore + collateralAmount);
@@ -948,6 +995,7 @@ contract SimpleLendingPoolTest is Test {
 
         assertEq(lending.collateralOf(user), 1 ether);
         assertEq(lending.debtOf(user), 1500e6);
+        assertEq(lending.totalDebt(), 1500e6);
         assertEq(lending.healthFactor(user), 960_000_000_000_000_000);
     }
 
@@ -996,6 +1044,7 @@ contract SimpleLendingPoolTest is Test {
 
         assertEq(lending.collateralOf(user), 1 ether);
         assertEq(lending.debtOf(user), 1500e6);
+        assertEq(lending.totalDebt(), 1500e6);
         assertEq(lending.healthFactor(user), 1_066_666_666_666_666_666);
     }
 
@@ -1058,6 +1107,7 @@ contract SimpleLendingPoolTest is Test {
 
         assertEq(lending.collateralOf(user), 1 ether);
         assertEq(lending.debtOf(user), 1500e6);
+        assertEq(lending.totalDebt(), 1500e6);
     }
 
     function test_liquidate_revertsWhenInsufficientLiquidatorFundsAllowanceRollback() public {
@@ -1080,6 +1130,236 @@ contract SimpleLendingPoolTest is Test {
 
         assertEq(lending.collateralOf(user), 1 ether);
         assertEq(lending.debtOf(user), 1500e6);
+        assertEq(lending.totalDebt(), 1500e6);
         assertEq(lending.healthFactor(user), 960_000_000_000_000_000);
+    }
+
+    function test_liquidate_revertsWhenDebtReductionTooSmall() public {
+        _openMaxBorrowPosition();
+
+        assertEq(lending.collateralOf(user), 1 ether);
+        assertEq(lending.debtOf(user), 1500e6);
+
+        _setLatestPriceOracle(1800e8);
+
+        address liquidator = address(0x1002);
+        mockUSDC.mint(liquidator, 1000e6);
+
+        skip(365 days);
+        _setLatestPriceOracle(1800e8);
+
+        vm.startPrank(liquidator);
+        mockUSDC.approve(address(lending), 1000e6);
+
+        vm.expectRevert(abi.encodeWithSelector(SimpleLendingPool.DebtReductionTooSmall.selector, 1));
+        lending.liquidate(user, 1);
+        vm.stopPrank();
+
+        assertEq(lending.collateralOf(user), 1 ether);
+        assertEq(lending.debtOf(user), 1541.25e6);
+        assertEq(lending.healthFactor(user), 934_306_569_343_065_693);
+    }
+
+    function test_utilization_borrowRate_lifecycle() public {
+        _fundsPool();
+        _setLatestPriceOracle(int256(2000e8));
+
+        assertEq(lending.collateralValue(user), 0);
+        assertEq(lending.maxBorrow(user), 0);
+        assertEq(lending.totalDebt(), 0);
+        assertEq(lending.utilization(), 0);
+
+        vm.startPrank(user);
+        mockWETH.approve(address(lending), 6 ether);
+        lending.supplyCollateral(6 ether);
+        lending.borrow(1500e6);
+
+        assertEq(lending.totalDebt(), 1500e6);
+        assertEq(lending.utilization(), 0.15e18);
+        assertEq(lending.currentBorrowRate(), 0.0275e18);
+
+        lending.borrow(6500e6);
+
+        assertEq(lending.collateralValue(user), 12_000e18); // 1 ether * wethPrice
+        assertEq(lending.maxBorrow(user), 9000e6); // collateralValue * LTV => wad to debt token units
+
+        assertEq(lending.totalDebt(), 8000e6);
+        assertEq(lending.borrowIndex(), 1e18);
+        assertEq(lending.lastInterestUpdate(), block.timestamp);
+
+        assertEq(lending.utilization(), 0.8e18);
+        assertEq(lending.currentBorrowRate(), 0.06e18);
+
+        lending.accrueInterest();
+        assertEq(lending.borrowIndex(), 1e18);
+        assertEq(lending.lastInterestUpdate(), block.timestamp);
+
+        uint256 expectedTimestamp = block.timestamp + 365 days;
+
+        skip(365 days);
+
+        lending.accrueInterest();
+        assertEq(lending.borrowIndex(), 1.06e18);
+        assertEq(lending.lastInterestUpdate(), expectedTimestamp);
+        assertEq(lending.utilization(), 809_160_305_343_511_450);
+        assertEq(lending.currentBorrowRate(), 94_351_145_038_167_937);
+        assertEq(lending.totalDebt(), 8480e6); // scaled already
+
+        // pool funds = 10_000 USDC
+        // borrow = 1_500
+        // available = 8_500
+
+        // U = 15%
+        // rate = 2.75%
+
+        // then debt = 8_000
+        // available = 2_000
+
+        // U = 80%
+        // rate = 6%
+
+        // + 1 year
+        // borrowIndex = 1.06
+
+        // =>
+        // U = 809_160_305_343_511_450
+        // rate ~ 9.4%
+        // totalDebt = 8480e6
+
+        vm.stopPrank();
+    }
+
+    function test_accrueInterest_updatesBorrowIndex() public {
+        _fundsPool();
+        _setLatestPriceOracle(int256(2000e8));
+
+        vm.startPrank(user);
+        mockWETH.approve(address(lending), 6 ether);
+        lending.supplyCollateral(6 ether);
+        lending.borrow(8000e6);
+
+        assertEq(lending.utilization(), 0.8e18);
+
+        assertEq(lending.borrowIndex(), 1e18);
+
+        uint256 expectedTimestamp = block.timestamp + 365 days;
+
+        skip(365 days);
+
+        lending.accrueInterest();
+        assertEq(lending.borrowIndex(), 1.06e18);
+
+        vm.stopPrank();
+    }
+
+    function test_virtual_debt_grows_without_storage_update() public {
+        _fundsPool();
+        _setLatestPriceOracle(int256(2000e8));
+
+        vm.startPrank(user);
+        mockWETH.approve(address(lending), 6 ether);
+        lending.supplyCollateral(6 ether);
+        lending.borrow(8000e6);
+        vm.stopPrank();
+
+        assertEq(lending.borrowIndex(), 1e18);
+        assertEq(lending.currentBorrowIndex(), 1e18);
+
+        assertEq(lending.totalDebt(), 8000e6);
+        assertEq(lending.debtOf(user), 8000e6);
+
+        skip(365 days);
+
+        assertEq(lending.borrowIndex(), 1e18);
+        assertEq(lending.currentBorrowIndex(), 1.06e18);
+
+        assertEq(lending.debtOf(user), 8480e6);
+        assertEq(lending.totalDebt(), 8480e6);
+    }
+
+    function test_previewBorrowIndex() public {
+        _fundsPool();
+        _setLatestPriceOracle(int256(2000e8));
+
+        vm.startPrank(user);
+        mockWETH.approve(address(lending), 6 ether);
+        lending.supplyCollateral(6 ether);
+        lending.borrow(8000e6);
+        vm.stopPrank();
+
+        assertEq(lending.borrowIndex(), 1e18);
+        assertEq(lending.currentBorrowIndex(), 1e18);
+
+        assertEq(lending.totalDebt(), 8000e6);
+        assertEq(lending.debtOf(user), 8000e6);
+
+        skip(30 days);
+
+        uint256 previewIndex = lending.currentBorrowIndex();
+
+        lending.accrueInterest();
+
+        assertEq(lending.borrowIndex(), previewIndex); //1004931506849315069
+        assertEq(lending.currentBorrowIndex(), previewIndex);
+        assertEq(lending.lastInterestUpdate(), block.timestamp);
+    }
+
+    function test_healthFactor_interest_alone_reduces_health_factor() public {
+        _openMaxBorrowPosition();
+
+        assertEq(lending.collateralValue(user), 2000e18);
+        assertEq(lending.maxBorrow(user), 1500e6);
+        assertEq(lending.debtOf(user), 1500e6);
+
+        assertEq(lending.healthFactor(user), 1_066_666_666_666_666_666);
+
+        uint256 hfBefore = lending.healthFactor(user);
+
+        skip(365 days);
+
+        _setLatestPriceOracle(int256(2000e8));
+
+        assertEq(lending.debtOf(user), 1541.25e6);
+
+        uint256 hfAfter = lending.healthFactor(user);
+
+        assertLt(hfAfter, hfBefore); //1_038_118_410_381_184_103 < 1_066_666_666_666_666_666
+
+        skip(2 * 365 days);
+
+        _setLatestPriceOracle(int256(2000e8));
+
+        assertEq(lending.debtOf(user), 1623.75e6);
+
+        hfAfter = lending.healthFactor(user);
+
+        assertLt(hfAfter, 1e18); // liquidatable
+    }
+
+    function test_new_borrow_does_not_receive_historical_interest() public {
+        _fundsPool();
+        _setLatestPriceOracle(int256(2000e8));
+
+        vm.startPrank(user);
+        mockWETH.approve(address(lending), 1 ether);
+        lending.supplyCollateral(1 ether);
+        lending.borrow(1000e6);
+        vm.stopPrank();
+
+        assertEq(lending.collateralValue(user), 2000e18);
+        assertEq(lending.maxBorrow(user), 1500e6);
+        assertEq(lending.debtOf(user), 1000e6);
+
+        skip(60 days);
+        _setLatestPriceOracle(int256(2000e8));
+
+        uint256 accruedDebtBeforeSecondBorrow = lending.debtOf(user);
+
+        vm.prank(user);
+        lending.borrow(200e6);
+
+        uint256 debtAfter = lending.debtOf(user);
+
+        assertGe(debtAfter, accruedDebtBeforeSecondBorrow + 200e6);
     }
 }
