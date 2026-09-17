@@ -2,7 +2,7 @@
 pragma solidity ^0.8.35;
 
 import { Test } from "@forge-std/Test.sol";
-import { ReserveStateModel } from "src/labs/lending/ReserveStateModel.sol";
+import { ReserveStateModel, Math } from "src/labs/lending/ReserveStateModel.sol";
 
 contract ReserveStateModelTest is Test {
     ReserveStateModel reserveModel;
@@ -91,5 +91,70 @@ contract ReserveStateModelTest is Test {
 
         assertEq(state.borrowIndex, 1.06e18);
         assertEq(state.liquidityIndex, 1.0432e18);
+    }
+
+    function test_borrow() public {
+        reserveModel.setReserveState(8000e6, 10_000e6, 2000e6, 0.06e18, 0.0432e18, 0.1e18);
+
+        uint256 start = block.timestamp;
+
+        skip(365 days);
+
+        reserveModel.borrow(1000e6);
+
+        ReserveStateModel.ReserveState memory state = reserveModel.getReserveState();
+
+        assertEq(state.borrowIndex, 1.06e18);
+        assertEq(state.liquidityIndex, 1.0432e18);
+        assertEq(state.accruedToTreasury, 48e6);
+        assertEq(state.availableLiquidity, 1000e6);
+
+        assertEq(reserveModel.totalDebt(), 9_480_000_001);
+        assertEq(reserveModel.utilization(), 904_580_152_680_860_672);
+
+        assertGt(reserveModel.borrowRate(), 0.06e18);
+        assertGt(reserveModel.liquidityRate(), 0.0432e18);
+    }
+
+    function test_borrow_second_interval_accrues_using_rateAfterBorrow() public {
+        reserveModel.setReserveState(8000e6, 10_000e6, 2000e6, 0.06e18, 0.0432e18, 0.1e18);
+
+        uint256 start = block.timestamp;
+
+        skip(365 days);
+
+        reserveModel.borrow(1000e6);
+
+        ReserveStateModel.ReserveState memory state = reserveModel.getReserveState();
+
+        assertEq(state.borrowIndex, 1.06e18);
+        assertEq(state.liquidityIndex, 1.0432e18);
+        assertEq(state.accruedToTreasury, 48e6);
+        assertEq(state.availableLiquidity, 1000e6);
+
+        assertEq(reserveModel.totalDebt(), 9_480_000_001);
+        assertEq(reserveModel.utilization(), 904_580_152_680_860_672);
+
+        assertGt(reserveModel.borrowRate(), 0.06e18);
+        assertGt(reserveModel.liquidityRate(), 0.0432e18);
+
+        state = reserveModel.getReserveState();
+
+        uint256 rateAfterBorrow = state.currentBorrowRate;
+        uint256 borrowIndexBeforeSecondInterval = state.borrowIndex;
+
+        uint256 expectedGrowth = Math.mulDiv(borrowIndexBeforeSecondInterval, rateAfterBorrow, 1e18, Math.Rounding.Ceil);
+
+        uint256 expectedBorrowIndex = borrowIndexBeforeSecondInterval + expectedGrowth;
+
+        skip(365 days);
+        reserveModel.accrueReserve();
+
+        state = reserveModel.getReserveState();
+
+        assertEq(state.borrowIndex, expectedBorrowIndex);
+
+        assertEq(reserveModel.totalDebt(), 13_766_624_429);
+        assertEq(reserveModel.utilization(), 932_279_716_003_603_926);
     }
 }

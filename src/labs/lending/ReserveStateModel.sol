@@ -23,6 +23,8 @@ contract ReserveStateModel {
     error InvalidTimestamp(uint256 timestamp, uint256 lastUpdateTimestamp);
     error InvalidReserveFactor(uint256 reserveFactor);
     error InvalidIndex(uint256 index);
+    error InsufficientLiquidity(uint256 requested, uint256 available);
+    error ZeroAmount();
 
     uint256 public constant BASE_RATE = 0.02e18; // 2%
     uint256 public constant SLOPE1 = 0.04e18; // 4%;  slope1 - pre-kink slope
@@ -154,29 +156,7 @@ contract ReserveStateModel {
         // → commit both indexes
         // → commit treasury
         // → commit timestamp
-
-        ReserveState storage state = reserve;
-
-        uint256 oldBorrowIndex = state.borrowIndex;
-
-        // uint256 oldLiquidityIndex = state.liquidityIndex;
-
-        uint256 newBorrowIndex = previewBorrowIndex(block.timestamp);
-
-        uint256 newLiquidityIndex = previewLiquidityIndex(block.timestamp);
-
-        uint256 debtBefore = _scaledDebtToActual(state.totalScaledDebt, oldBorrowIndex);
-
-        uint256 debtAfter = _scaledDebtToActual(state.totalScaledDebt, newBorrowIndex);
-
-        uint256 borrowInterest = debtAfter - debtBefore;
-
-        uint256 treasuryAccrual = Math.mulDiv(borrowInterest, state.reserveFactor, WAD, Math.Rounding.Floor);
-
-        state.borrowIndex = newBorrowIndex;
-        state.liquidityIndex = newLiquidityIndex;
-        state.accruedToTreasury += treasuryAccrual;
-        state.lastUpdateTimestamp = block.timestamp;
+        _accrueReserve();
     }
 
     function setReserveState(
@@ -237,5 +217,81 @@ contract ReserveStateModel {
 
     function _scaledDebtToActual(uint256 scaledDebt, uint256 index) internal pure returns (uint256) {
         return Math.mulDiv(scaledDebt, index, WAD, Math.Rounding.Ceil);
+    }
+
+    // Indexes settle the past; rates price the future.
+    function borrow(uint256 amount) external {
+        // accrue past → mutate present → price future
+
+        require(amount > 0, ZeroAmount());
+
+        // settle previous interval using OLD stored rates
+        _accrueReserve();
+
+        ReserveState storage state = reserve;
+        // validate available liquidity
+        require(amount <= state.availableLiquidity, InsufficientLiquidity(amount, state.availableLiquidity));
+
+        // convert amount → scaled debt using CURRENT borrowIndex
+        uint256 scaledBorrowAmount = _actualDebtToScaled(amount);
+
+        state.totalScaledDebt += scaledBorrowAmount;
+
+        state.availableLiquidity -= amount;
+
+        // calculate utilization from NEW reserve state
+        // store rates for NEXT interval
+        _updateRates();
+    }
+
+    function _accrueReserve() internal {
+        // settle past
+        // preview both indexes
+        // → calculate debt delta
+        // → calculate treasury delta
+        // → commit both indexes
+        // → commit treasury
+        // → commit timestamp
+
+        ReserveState storage state = reserve;
+
+        uint256 oldBorrowIndex = state.borrowIndex;
+
+        // uint256 oldLiquidityIndex = state.liquidityIndex;
+
+        uint256 newBorrowIndex = previewBorrowIndex(block.timestamp);
+
+        uint256 newLiquidityIndex = previewLiquidityIndex(block.timestamp);
+
+        uint256 debtBefore = _scaledDebtToActual(state.totalScaledDebt, oldBorrowIndex);
+
+        uint256 debtAfter = _scaledDebtToActual(state.totalScaledDebt, newBorrowIndex);
+
+        uint256 borrowInterest = debtAfter - debtBefore;
+
+        uint256 treasuryAccrual = Math.mulDiv(borrowInterest, state.reserveFactor, WAD, Math.Rounding.Floor);
+
+        state.borrowIndex = newBorrowIndex;
+        state.liquidityIndex = newLiquidityIndex;
+        state.accruedToTreasury += treasuryAccrual;
+        state.lastUpdateTimestamp = block.timestamp;
+    }
+
+    function _actualDebtToScaled(uint256 amount) internal view returns (uint256) {
+        uint256 actualBorrowIndex = reserve.borrowIndex;
+
+        require(actualBorrowIndex >= WAD, InvalidIndex(actualBorrowIndex));
+
+        return Math.mulDiv(amount, WAD, actualBorrowIndex, Math.Rounding.Ceil);
+    }
+
+    function _updateRates() internal {
+        uint256 newBorrowRate = borrowRate();
+        uint256 newLiquidityRate = liquidityRate();
+
+        ReserveState storage state = reserve;
+
+        state.currentBorrowRate = newBorrowRate;
+        state.currentLiquidityRate = newLiquidityRate;
     }
 }
