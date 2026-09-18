@@ -18,12 +18,29 @@ import { DecimalMath, Math } from "src/common/math/DecimalMath.sol";
 // update borrow/liquidity indexes
 // accrue treasury
 // recompute rates after mutation
+//
+// ==============================
+//
+// Core reserve lifecycle:
+//
+// Supply   → liquidity ↑ → utilization ↓ → rates ↓
+// Withdraw → liquidity ↓ → utilization ↑ → rates ↑
+
+// Borrow   → liquidity ↓ + debt ↑ → utilization ↑ → rates ↑
+// Repay    → liquidity ↑ + debt ↓ → utilization ↓ → rates ↓
+
+// Time     → indexes ↑
+//          → debt / supplier claims ↑
+//          → treasury accrues
 
 contract ReserveStateModel {
     error InvalidTimestamp(uint256 timestamp, uint256 lastUpdateTimestamp);
     error InvalidReserveFactor(uint256 reserveFactor);
     error InvalidIndex(uint256 index);
     error InsufficientLiquidity(uint256 requested, uint256 available);
+    error CurrentDebtExceeded(uint256 amount, uint256 debt);
+    error WithdrawExceedsSupply(uint256 amount, uint256 currentSupply);
+    error SupplyTooSmall(uint256 scaledMint);
     error ZeroAmount();
 
     uint256 public constant BASE_RATE = 0.02e18; // 2%
@@ -68,6 +85,206 @@ contract ReserveStateModel {
             reserveFactor: DEFAULT_RESERVE_FACTOR,
             lastUpdateTimestamp: block.timestamp
         });
+    }
+
+    function setReserveState(
+        uint256 totalScaledDebt,
+        uint256 totalScaledSupply,
+        uint256 availableLiquidity,
+        uint256 currentBorrowRate,
+        uint256 currentLiquidityRate,
+        uint256 reserveFactor
+    ) public {
+        require(reserveFactor <= WAD, InvalidReserveFactor(reserveFactor));
+
+        ReserveState storage state = reserve;
+
+        state.totalScaledDebt = totalScaledDebt;
+        state.totalScaledSupply = totalScaledSupply;
+        state.availableLiquidity = availableLiquidity;
+        state.currentBorrowRate = currentBorrowRate;
+        state.currentLiquidityRate = currentLiquidityRate;
+        state.reserveFactor = reserveFactor;
+    }
+
+    function updateScaledTotals(uint256 totalScaledDebt, uint256 totalScaledSupply) external {
+        ReserveState storage state = reserve;
+
+        state.totalScaledDebt = totalScaledDebt;
+        state.totalScaledSupply = totalScaledSupply;
+    }
+
+    function updateAvailableLiquidity(uint256 availableLiquidity) external {
+        ReserveState storage state = reserve;
+
+        state.availableLiquidity = availableLiquidity;
+    }
+
+    function updateRates(uint256 currentBorrowRate, uint256 currentLiquidityRate) external {
+        ReserveState storage state = reserve;
+
+        state.currentBorrowRate = currentBorrowRate;
+        state.currentLiquidityRate = currentLiquidityRate;
+    }
+
+    // BORROW:
+    // accrue
+    // → scaled debt mint CEIL
+    // → available ↓
+    // → update rates
+
+    // REPAY:
+    // accrue
+    // → scaled debt burn FLOOR
+    // → available ↑
+    // → update rates
+
+    // SUPPLY:
+    // accrue
+    // → scaled supply mint FLOOR
+    // → available ↑
+    // → update rates
+
+    // WITHDRAW:
+    // accrue
+    // → scaled supply burn CEIL
+    // → available ↓
+    // → update rates
+
+    // Indexes settle the past; rates price the future.
+    function borrow(uint256 amount) external {
+        // accrue past → mutate present → price future
+
+        require(amount > 0, ZeroAmount());
+
+        // settle previous interval using OLD stored rates
+        _accrueReserve();
+
+        ReserveState storage state = reserve;
+        // validate available liquidity
+        require(amount <= state.availableLiquidity, InsufficientLiquidity(amount, state.availableLiquidity));
+
+        // convert amount → scaled debt using CURRENT borrowIndex
+        uint256 scaledBorrowAmount = _actualDebtToScaled(amount);
+
+        state.totalScaledDebt += scaledBorrowAmount;
+
+        state.availableLiquidity -= amount;
+
+        // calculate utilization from NEW reserve state
+        // store rates for NEXT interval
+        _updateRates();
+    }
+
+    function repay(uint256 amount) external {
+        require(amount > 0, ZeroAmount());
+
+        _accrueReserve();
+
+        ReserveState storage state = reserve;
+
+        uint256 debt = totalDebt();
+
+        require(amount <= debt, CurrentDebtExceeded(amount, debt));
+
+        if (amount == debt) {
+            state.totalScaledDebt = 0;
+        } else {
+            uint256 scaledRepayAmount = _actualDebtToScaled(amount);
+
+            state.totalScaledDebt -= scaledRepayAmount;
+        }
+
+        state.availableLiquidity += amount;
+
+        _updateRates();
+    }
+
+    function supply(uint256 amount) external {
+        require(amount > 0, ZeroAmount());
+
+        _accrueReserve();
+
+        ReserveState storage state = reserve;
+
+        uint256 scaledMint = _actualSupplyToScaledMint(amount);
+
+        require(scaledMint > 0, SupplyTooSmall(amount));
+
+        state.totalScaledSupply += scaledMint;
+        state.availableLiquidity += amount;
+
+        _updateRates();
+    }
+
+    function withdraw(uint256 amount) external {
+        require(amount > 0, ZeroAmount());
+
+        _accrueReserve();
+
+        ReserveState storage state = reserve;
+
+        uint256 supply = totalSupply();
+
+        require(amount <= supply, WithdrawExceedsSupply(amount, supply));
+
+        require(amount <= state.availableLiquidity, InsufficientLiquidity(amount, state.availableLiquidity));
+
+        if (amount == supply) {
+            state.totalScaledSupply = 0;
+        } else {
+            uint256 scaledBurn = _actualSupplyToScaledBurn(amount);
+
+            state.totalScaledSupply -= scaledBurn;
+        }
+
+        state.availableLiquidity -= amount;
+
+        _updateRates();
+    }
+
+    function accrueReserve() external {
+        // settle past
+        // preview both indexes
+        // → calculate debt delta
+        // → calculate treasury delta
+        // → commit both indexes
+        // → commit treasury
+        // → commit timestamp
+        _accrueReserve();
+    }
+
+    function _accrueReserve() internal {
+        // settle past
+        // preview both indexes
+        // → calculate debt delta
+        // → calculate treasury delta
+        // → commit both indexes
+        // → commit treasury
+        // → commit timestamp
+
+        ReserveState storage state = reserve;
+
+        uint256 oldBorrowIndex = state.borrowIndex;
+
+        // uint256 oldLiquidityIndex = state.liquidityIndex;
+
+        uint256 newBorrowIndex = previewBorrowIndex(block.timestamp);
+
+        uint256 newLiquidityIndex = previewLiquidityIndex(block.timestamp);
+
+        uint256 debtBefore = _scaledDebtToActual(state.totalScaledDebt, oldBorrowIndex);
+
+        uint256 debtAfter = _scaledDebtToActual(state.totalScaledDebt, newBorrowIndex);
+
+        uint256 borrowInterest = debtAfter - debtBefore;
+
+        uint256 treasuryAccrual = Math.mulDiv(borrowInterest, state.reserveFactor, WAD, Math.Rounding.Floor);
+
+        state.borrowIndex = newBorrowIndex;
+        state.liquidityIndex = newLiquidityIndex;
+        state.accruedToTreasury += treasuryAccrual;
+        state.lastUpdateTimestamp = block.timestamp;
     }
 
     function previewBorrowIndex(uint256 timestamp) public view returns (uint256) {
@@ -148,57 +365,6 @@ contract ReserveStateModel {
         return state.liquidityIndex + growth;
     }
 
-    function accrueReserve() external {
-        // settle past
-        // preview both indexes
-        // → calculate debt delta
-        // → calculate treasury delta
-        // → commit both indexes
-        // → commit treasury
-        // → commit timestamp
-        _accrueReserve();
-    }
-
-    function setReserveState(
-        uint256 totalScaledDebt,
-        uint256 totalScaledSupply,
-        uint256 availableLiquidity,
-        uint256 currentBorrowRate,
-        uint256 currentLiquidityRate,
-        uint256 reserveFactor
-    ) public {
-        require(reserveFactor <= WAD, InvalidReserveFactor(reserveFactor));
-
-        ReserveState storage state = reserve;
-
-        state.totalScaledDebt = totalScaledDebt;
-        state.totalScaledSupply = totalScaledSupply;
-        state.availableLiquidity = availableLiquidity;
-        state.currentBorrowRate = currentBorrowRate;
-        state.currentLiquidityRate = currentLiquidityRate;
-        state.reserveFactor = reserveFactor;
-    }
-
-    function updateScaledTotals(uint256 totalScaledDebt, uint256 totalScaledSupply) external {
-        ReserveState storage state = reserve;
-
-        state.totalScaledDebt = totalScaledDebt;
-        state.totalScaledSupply = totalScaledSupply;
-    }
-
-    function updateAvailableLiquidity(uint256 availableLiquidity) external {
-        ReserveState storage state = reserve;
-
-        state.availableLiquidity = availableLiquidity;
-    }
-
-    function updateRates(uint256 currentBorrowRate, uint256 currentLiquidityRate) external {
-        ReserveState storage state = reserve;
-
-        state.currentBorrowRate = currentBorrowRate;
-        state.currentLiquidityRate = currentLiquidityRate;
-    }
-
     function getReserveState() external view returns (ReserveState memory) {
         return reserve;
     }
@@ -209,72 +375,26 @@ contract ReserveStateModel {
         return Math.mulDiv(state.totalScaledDebt, state.borrowIndex, WAD, Math.Rounding.Ceil);
     }
 
-    function totalSupply() external view returns (uint256) {
+    function totalSupply() public view returns (uint256) {
         ReserveState storage state = reserve;
 
         return Math.mulDiv(state.totalScaledSupply, state.liquidityIndex, WAD, Math.Rounding.Floor);
     }
 
+    function currentTotalSupply() public view returns (uint256) {
+        uint256 currentIndex = previewLiquidityIndex(block.timestamp);
+
+        return Math.mulDiv(reserve.totalScaledSupply, currentIndex, WAD, Math.Rounding.Floor);
+    }
+
+    function currentTotalDebt() public view returns (uint256) {
+        uint256 currentIndex = previewBorrowIndex(block.timestamp);
+
+        return Math.mulDiv(reserve.totalScaledDebt, currentIndex, WAD, Math.Rounding.Ceil);
+    }
+
     function _scaledDebtToActual(uint256 scaledDebt, uint256 index) internal pure returns (uint256) {
         return Math.mulDiv(scaledDebt, index, WAD, Math.Rounding.Ceil);
-    }
-
-    // Indexes settle the past; rates price the future.
-    function borrow(uint256 amount) external {
-        // accrue past → mutate present → price future
-
-        require(amount > 0, ZeroAmount());
-
-        // settle previous interval using OLD stored rates
-        _accrueReserve();
-
-        ReserveState storage state = reserve;
-        // validate available liquidity
-        require(amount <= state.availableLiquidity, InsufficientLiquidity(amount, state.availableLiquidity));
-
-        // convert amount → scaled debt using CURRENT borrowIndex
-        uint256 scaledBorrowAmount = _actualDebtToScaled(amount);
-
-        state.totalScaledDebt += scaledBorrowAmount;
-
-        state.availableLiquidity -= amount;
-
-        // calculate utilization from NEW reserve state
-        // store rates for NEXT interval
-        _updateRates();
-    }
-
-    function _accrueReserve() internal {
-        // settle past
-        // preview both indexes
-        // → calculate debt delta
-        // → calculate treasury delta
-        // → commit both indexes
-        // → commit treasury
-        // → commit timestamp
-
-        ReserveState storage state = reserve;
-
-        uint256 oldBorrowIndex = state.borrowIndex;
-
-        // uint256 oldLiquidityIndex = state.liquidityIndex;
-
-        uint256 newBorrowIndex = previewBorrowIndex(block.timestamp);
-
-        uint256 newLiquidityIndex = previewLiquidityIndex(block.timestamp);
-
-        uint256 debtBefore = _scaledDebtToActual(state.totalScaledDebt, oldBorrowIndex);
-
-        uint256 debtAfter = _scaledDebtToActual(state.totalScaledDebt, newBorrowIndex);
-
-        uint256 borrowInterest = debtAfter - debtBefore;
-
-        uint256 treasuryAccrual = Math.mulDiv(borrowInterest, state.reserveFactor, WAD, Math.Rounding.Floor);
-
-        state.borrowIndex = newBorrowIndex;
-        state.liquidityIndex = newLiquidityIndex;
-        state.accruedToTreasury += treasuryAccrual;
-        state.lastUpdateTimestamp = block.timestamp;
     }
 
     function _actualDebtToScaled(uint256 amount) internal view returns (uint256) {
@@ -283,6 +403,22 @@ contract ReserveStateModel {
         require(actualBorrowIndex >= WAD, InvalidIndex(actualBorrowIndex));
 
         return Math.mulDiv(amount, WAD, actualBorrowIndex, Math.Rounding.Ceil);
+    }
+
+    function _actualSupplyToScaledMint(uint256 amount) internal view returns (uint256) {
+        uint256 actualLiquidityIndex = reserve.liquidityIndex;
+
+        require(actualLiquidityIndex >= WAD, InvalidIndex(actualLiquidityIndex));
+
+        return Math.mulDiv(amount, WAD, actualLiquidityIndex, Math.Rounding.Floor);
+    }
+
+    function _actualSupplyToScaledBurn(uint256 amount) internal view returns (uint256) {
+        uint256 actualLiquidityIndex = reserve.liquidityIndex;
+
+        require(actualLiquidityIndex >= WAD, InvalidIndex(actualLiquidityIndex));
+
+        return Math.mulDiv(amount, WAD, actualLiquidityIndex, Math.Rounding.Ceil);
     }
 
     function _updateRates() internal {
