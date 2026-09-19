@@ -4,6 +4,26 @@ pragma solidity ^0.8.35;
 import { Test } from "@forge-std/Test.sol";
 import { ReserveStateModel, Math } from "src/labs/lending/ReserveStateModel.sol";
 
+// Reserve Lifecycle:
+
+// accrue old interval
+//         ↓
+// commit indexes + treasury
+//         ↓
+// perform action
+//         ↓
+// new debt/liquidity state
+//         ↓
+// new utilization
+//         ↓
+// store rates for next interval
+
+// Supply   → available ↑ → U ↓ → rates ↓
+// Withdraw → available ↓ → U ↑ → rates ↑
+
+// Borrow   → debt ↑ + available ↓ → U ↑ → rates ↑
+// Repay    → debt ↓ + available ↑ → U ↓ → rates ↓
+
 contract ReserveStateModelTest is Test {
     ReserveStateModel reserveModel;
 
@@ -189,11 +209,11 @@ contract ReserveStateModelTest is Test {
         assertEq(state.accruedToTreasury, 48e6);
         assertEq(state.availableLiquidity, 1500e6);
 
-        assertEq(reserveModel.totalDebt(), 8_980_000_000);
-        assertEq(reserveModel.utilization(), 856_870_229_007_633_587);
+        assertEq(reserveModel.totalDebt(), 8_980_000_001);
+        assertEq(reserveModel.utilization(), 856_870_229_021_291_008);
 
-        assertEq(reserveModel.borrowRate(), 273_263_358_778_625_951); //BorrowRate ≈ 27.3263%
-        assertEq(reserveModel.liquidityRate(), 210_736_113_134_432_722); //Liquidity rate: ~21.07%
+        assertEq(reserveModel.borrowRate(), 273_263_358_829_841_280); //BorrowRate: ~ 27.3263%
+        assertEq(reserveModel.liquidityRate(), 210_736_113_177_287_988); //Liquidity rate: ~ 21.07%
 
         skip(365 days);
 
@@ -205,8 +225,8 @@ contract ReserveStateModelTest is Test {
 
         state = reserveModel.getReserveState();
 
-        assertEq(state.borrowIndex, 1_349_659_160_305_343_509);
-        assertEq(state.liquidityIndex, 1_263_039_913_221_840_215);
+        assertEq(state.borrowIndex, 1_349_659_160_359_631_757);
+        assertEq(state.liquidityIndex, 1_263_039_913_266_546_829);
 
         // 48
         // +
@@ -220,7 +240,7 @@ contract ReserveStateModelTest is Test {
         // 11,433.904962
         // =
         // 12,933.904962 USDC
-        assertEq(state.availableLiquidity, 12_933_904_962);
+        assertEq(state.availableLiquidity, 12_933_904_964);
 
         assertEq(state.currentBorrowRate, reserveModel.BASE_RATE());
         assertEq(state.currentLiquidityRate, 0);
@@ -416,5 +436,114 @@ contract ReserveStateModelTest is Test {
         assertEq(state.totalScaledSupply, 0);
         assertEq(reserveModel.totalSupply(), 0);
         assertEq(state.availableLiquidity, 0);
+    }
+
+    // adversarial tests
+
+    function test_borrow_revertsWhenZeroAmount() public {
+        reserveModel.setReserveState(8000e6, 10_000e6, 2000e6, 0.06e18, 0.0432e18, 0.1e18);
+
+        vm.expectRevert(ReserveStateModel.ZeroAmount.selector);
+        reserveModel.borrow(0e6);
+    }
+
+    function test_borrow_revertsWhenInsufficientLiquidity() public {
+        reserveModel.setReserveState(8000e6, 10_000e6, 2000e6, 0.06e18, 0.0432e18, 0.1e18);
+
+        vm.expectRevert(abi.encodeWithSelector(ReserveStateModel.InsufficientLiquidity.selector, 2001e6, 2000e6));
+        reserveModel.borrow(2001e6);
+    }
+
+    function test_repay_revertsWhenZeroAmount() public {
+        reserveModel.setReserveState(8000e6, 10_000e6, 2000e6, 0.06e18, 0.0432e18, 0.1e18);
+
+        vm.expectRevert(ReserveStateModel.ZeroAmount.selector);
+        reserveModel.repay(0e6);
+    }
+
+    function test_repay_revertsWhenCurrentDebtExceeded() public {
+        reserveModel.setReserveState(8000e6, 10_000e6, 2000e6, 0.06e18, 0.0432e18, 0.1e18);
+
+        vm.expectRevert(abi.encodeWithSelector(ReserveStateModel.CurrentDebtExceeded.selector, 8001e6, 8000e6));
+        reserveModel.repay(8001e6);
+    }
+
+    function test_supply_revertsWhenZeroAmount() public {
+        vm.expectRevert(ReserveStateModel.ZeroAmount.selector);
+        reserveModel.supply(0e6);
+    }
+
+    function test_supply_revertsWhenSupplyTooSmall() public {
+        reserveModel.setReserveState(8000e6, 10_000e6, 2000e6, 0.06e18, 0.0432e18, 0.1e18);
+        skip(365 days);
+        vm.expectRevert(abi.encodeWithSelector(ReserveStateModel.SupplyTooSmall.selector, 1));
+        reserveModel.supply(1);
+    }
+
+    function test_withdraw_revertsWhenZeroAmount() public {
+        reserveModel.setReserveState(8000e6, 10_000e6, 2000e6, 0.06e18, 0.0432e18, 0.1e18);
+        vm.expectRevert(ReserveStateModel.ZeroAmount.selector);
+        reserveModel.withdraw(0e6);
+    }
+
+    function test_withdraw_revertsWhenWithdrawExceedsSupply() public {
+        reserveModel.setReserveState(8000e6, 10_000e6, 2000e6, 0.06e18, 0.0432e18, 0.1e18);
+        vm.expectRevert(abi.encodeWithSelector(ReserveStateModel.WithdrawExceedsSupply.selector, 10_001e6, 10_000e6));
+        reserveModel.withdraw(10_001e6);
+    }
+
+    function test_withdraw_revertsWhenInsufficientLiquidity() public {
+        reserveModel.setReserveState(8000e6, 10_000e6, 2000e6, 0.06e18, 0.0432e18, 0.1e18);
+        vm.expectRevert(abi.encodeWithSelector(ReserveStateModel.InsufficientLiquidity.selector, 2001e6, 2000e6));
+        reserveModel.withdraw(2001e6);
+    }
+
+    function test_previewTimestamp_revertsWhenInvalidTimestamp() public {
+        reserveModel.setReserveState(8000e6, 10_000e6, 2000e6, 0.06e18, 0.0432e18, 0.1e18);
+
+        skip(365 days);
+
+        reserveModel.supply(1000e6);
+
+        ReserveStateModel.ReserveState memory state = reserveModel.getReserveState();
+
+        uint256 timestamp = state.lastUpdateTimestamp - 1 days;
+
+        vm.expectRevert(
+            abi.encodeWithSelector(ReserveStateModel.InvalidTimestamp.selector, timestamp, state.lastUpdateTimestamp)
+        );
+        reserveModel.previewBorrowIndex(timestamp);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(ReserveStateModel.InvalidTimestamp.selector, timestamp, state.lastUpdateTimestamp)
+        );
+        reserveModel.previewLiquidityIndex(timestamp);
+    }
+
+    function test_repay_revertsWhenDebtReductionTooSmall() public {
+        reserveModel.setReserveState(8000e6, 10_000e6, 2000e6, 0.06e18, 0.0432e18, 0.1e18);
+
+        skip(365 days);
+        reserveModel.accrueReserve();
+
+        vm.expectRevert(abi.encodeWithSelector(ReserveStateModel.DebtReductionTooSmall.selector, 1));
+
+        reserveModel.repay(1);
+    }
+
+    function testFuzz_indexesNeverDecrease(uint40 elapsed) public {
+        elapsed = uint40(bound(elapsed, 0, 10 * 365 days));
+
+        reserveModel.setReserveState(8000e6, 10_000e6, 2000e6, 0.06e18, 0.0432e18, 0.1e18);
+
+        ReserveStateModel.ReserveState memory beforeState = reserveModel.getReserveState();
+
+        skip(elapsed);
+        reserveModel.accrueReserve();
+
+        ReserveStateModel.ReserveState memory afterState = reserveModel.getReserveState();
+
+        assertGe(afterState.borrowIndex, beforeState.borrowIndex);
+        assertGe(afterState.liquidityIndex, beforeState.liquidityIndex);
     }
 }
