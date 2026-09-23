@@ -48,7 +48,9 @@ contract ReserveStateModelTest is Test {
     }
 
     function test_accrueReserve_lifecycle() public {
-        reserveModel.setReserveState(8000e6, 10_000e6, 2000e6, 0.06e18, 0.0432e18, 0.1e18);
+        _setBalancedReserveWithoutDebt();
+
+        reserveModel.borrow(8000e6);
 
         uint256 currentTimestamp = block.timestamp;
 
@@ -114,7 +116,9 @@ contract ReserveStateModelTest is Test {
     }
 
     function test_borrow() public {
-        reserveModel.setReserveState(8000e6, 10_000e6, 2000e6, 0.06e18, 0.0432e18, 0.1e18);
+        _setBalancedReserveWithoutDebt();
+
+        reserveModel.borrow(8000e6);
 
         uint256 start = block.timestamp;
 
@@ -137,7 +141,9 @@ contract ReserveStateModelTest is Test {
     }
 
     function test_borrow_second_interval_accrues_using_rateAfterBorrow() public {
-        reserveModel.setReserveState(8000e6, 10_000e6, 2000e6, 0.06e18, 0.0432e18, 0.1e18);
+        _setBalancedReserveWithoutDebt();
+
+        reserveModel.borrow(8000e6);
 
         uint256 start = block.timestamp;
 
@@ -179,9 +185,9 @@ contract ReserveStateModelTest is Test {
     }
 
     function test_repay() public {
-        reserveModel.setReserveState(8000e6, 10_000e6, 2000e6, 0.06e18, 0.0432e18, 0.1e18);
+        _setBalancedReserveWithoutDebt();
 
-        uint256 start = block.timestamp;
+        reserveModel.borrow(8000e6);
 
         skip(365 days);
 
@@ -217,11 +223,17 @@ contract ReserveStateModelTest is Test {
 
         skip(365 days);
 
-        assertLt(reserveModel.totalDebt(), reserveModel.currentTotalDebt());
+        // assertLt(reserveModel.totalDebt(), reserveModel.currentTotalDebt());
 
-        uint256 repayFullAmount = reserveModel.currentTotalDebt();
+        // uint256 repayFullAmount = reserveModel.currentTotalDebt();
 
-        reserveModel.repay(repayFullAmount);
+        // reserveModel.repay(repayFullAmount);
+
+        uint256 currentUserDebt = reserveModel.currentDebtOf(address(this));
+
+        assertEq(currentUserDebt, reserveModel.currentTotalDebt());
+
+        reserveModel.repay(currentUserDebt);
 
         state = reserveModel.getReserveState();
 
@@ -245,6 +257,9 @@ contract ReserveStateModelTest is Test {
         assertEq(state.currentBorrowRate, reserveModel.BASE_RATE());
         assertEq(state.currentLiquidityRate, 0);
 
+        assertEq(reserveModel.scaledDebtOf(address(this)), 0);
+        assertEq(reserveModel.debtOf(address(this)), 0);
+        assertEq(state.totalScaledDebt, 0);
         assertEq(reserveModel.totalDebt(), 0);
         assertEq(reserveModel.utilization(), 0);
 
@@ -264,7 +279,9 @@ contract ReserveStateModelTest is Test {
     }
 
     function test_supply() public {
-        reserveModel.setReserveState(8000e6, 10_000e6, 2000e6, 0.06e18, 0.0432e18, 0.1e18);
+        _setBalancedReserveWithoutDebt();
+
+        reserveModel.borrow(8000e6);
 
         ReserveStateModel.ReserveState memory state = reserveModel.getReserveState();
 
@@ -335,7 +352,9 @@ contract ReserveStateModelTest is Test {
     }
 
     function test_withdraw() public {
-        reserveModel.setReserveState(8000e6, 10_000e6, 2000e6, 0.06e18, 0.0432e18, 0.1e18);
+        _setBalancedReserveWithoutDebt();
+
+        reserveModel.borrow(8000e6);
 
         ReserveStateModel.ReserveState memory state = reserveModel.getReserveState();
 
@@ -441,31 +460,45 @@ contract ReserveStateModelTest is Test {
     // adversarial tests
 
     function test_borrow_revertsWhenZeroAmount() public {
-        reserveModel.setReserveState(8000e6, 10_000e6, 2000e6, 0.06e18, 0.0432e18, 0.1e18);
+        _setBalancedReserveWithoutDebt();
+
+        reserveModel.borrow(8000e6);
 
         vm.expectRevert(ReserveStateModel.ZeroAmount.selector);
         reserveModel.borrow(0e6);
     }
 
     function test_borrow_revertsWhenInsufficientLiquidity() public {
-        reserveModel.setReserveState(8000e6, 10_000e6, 2000e6, 0.06e18, 0.0432e18, 0.1e18);
+        _setBalancedReserveWithoutDebt();
+
+        reserveModel.borrow(8000e6);
 
         vm.expectRevert(abi.encodeWithSelector(ReserveStateModel.InsufficientLiquidity.selector, 2001e6, 2000e6));
         reserveModel.borrow(2001e6);
     }
 
     function test_repay_revertsWhenZeroAmount() public {
-        reserveModel.setReserveState(8000e6, 10_000e6, 2000e6, 0.06e18, 0.0432e18, 0.1e18);
+        _setBalancedReserveWithoutDebt();
+
+        reserveModel.borrow(8000e6);
 
         vm.expectRevert(ReserveStateModel.ZeroAmount.selector);
         reserveModel.repay(0e6);
     }
 
     function test_repay_revertsWhenCurrentDebtExceeded() public {
-        reserveModel.setReserveState(8000e6, 10_000e6, 2000e6, 0.06e18, 0.0432e18, 0.1e18);
+        _setBalancedReserveWithoutDebt();
+
+        reserveModel.borrow(8000e6);
+
+        assertEq(reserveModel.debtOf(address(this)), 8000e6);
 
         vm.expectRevert(abi.encodeWithSelector(ReserveStateModel.CurrentDebtExceeded.selector, 8001e6, 8000e6));
         reserveModel.repay(8001e6);
+
+        assertEq(reserveModel.scaledDebtOf(address(this)), 8000e6);
+
+        assertEq(reserveModel.totalDebt(), 8000e6);
     }
 
     function test_supply_revertsWhenZeroAmount() public {
@@ -474,32 +507,42 @@ contract ReserveStateModelTest is Test {
     }
 
     function test_supply_revertsWhenSupplyTooSmall() public {
-        reserveModel.setReserveState(8000e6, 10_000e6, 2000e6, 0.06e18, 0.0432e18, 0.1e18);
+        _setBalancedReserveWithoutDebt();
+
+        reserveModel.borrow(8000e6);
         skip(365 days);
         vm.expectRevert(abi.encodeWithSelector(ReserveStateModel.SupplyTooSmall.selector, 1));
         reserveModel.supply(1);
     }
 
     function test_withdraw_revertsWhenZeroAmount() public {
-        reserveModel.setReserveState(8000e6, 10_000e6, 2000e6, 0.06e18, 0.0432e18, 0.1e18);
+        _setBalancedReserveWithoutDebt();
+
+        reserveModel.borrow(8000e6);
         vm.expectRevert(ReserveStateModel.ZeroAmount.selector);
         reserveModel.withdraw(0e6);
     }
 
     function test_withdraw_revertsWhenWithdrawExceedsSupply() public {
-        reserveModel.setReserveState(8000e6, 10_000e6, 2000e6, 0.06e18, 0.0432e18, 0.1e18);
+        _setBalancedReserveWithoutDebt();
+
+        reserveModel.borrow(8000e6);
         vm.expectRevert(abi.encodeWithSelector(ReserveStateModel.WithdrawExceedsSupply.selector, 10_001e6, 10_000e6));
         reserveModel.withdraw(10_001e6);
     }
 
     function test_withdraw_revertsWhenInsufficientLiquidity() public {
-        reserveModel.setReserveState(8000e6, 10_000e6, 2000e6, 0.06e18, 0.0432e18, 0.1e18);
+        _setBalancedReserveWithoutDebt();
+
+        reserveModel.borrow(8000e6);
         vm.expectRevert(abi.encodeWithSelector(ReserveStateModel.InsufficientLiquidity.selector, 2001e6, 2000e6));
         reserveModel.withdraw(2001e6);
     }
 
     function test_previewTimestamp_revertsWhenInvalidTimestamp() public {
-        reserveModel.setReserveState(8000e6, 10_000e6, 2000e6, 0.06e18, 0.0432e18, 0.1e18);
+        _setBalancedReserveWithoutDebt();
+
+        reserveModel.borrow(8000e6);
 
         skip(365 days);
 
@@ -521,7 +564,9 @@ contract ReserveStateModelTest is Test {
     }
 
     function test_repay_revertsWhenDebtReductionTooSmall() public {
-        reserveModel.setReserveState(8000e6, 10_000e6, 2000e6, 0.06e18, 0.0432e18, 0.1e18);
+        _setBalancedReserveWithoutDebt();
+
+        reserveModel.borrow(8000e6);
 
         skip(365 days);
         reserveModel.accrueReserve();
@@ -534,7 +579,9 @@ contract ReserveStateModelTest is Test {
     function testFuzz_indexesNeverDecrease(uint40 elapsed) public {
         elapsed = uint40(bound(elapsed, 0, 10 * 365 days));
 
-        reserveModel.setReserveState(8000e6, 10_000e6, 2000e6, 0.06e18, 0.0432e18, 0.1e18);
+        _setBalancedReserveWithoutDebt();
+
+        reserveModel.borrow(8000e6);
 
         ReserveStateModel.ReserveState memory beforeState = reserveModel.getReserveState();
 
@@ -545,5 +592,9 @@ contract ReserveStateModelTest is Test {
 
         assertGe(afterState.borrowIndex, beforeState.borrowIndex);
         assertGe(afterState.liquidityIndex, beforeState.liquidityIndex);
+    }
+
+    function _setBalancedReserveWithoutDebt() internal {
+        reserveModel.setReserveState(0, 10_000e6, 10_000e6, 0.02e18, 0, 0.1e18);
     }
 }

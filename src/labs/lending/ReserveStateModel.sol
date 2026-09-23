@@ -88,6 +88,8 @@ contract ReserveStateModel {
         });
     }
 
+    mapping(address user => uint256 scaledDebt) internal _scaledDebt;
+
     // LAB ONLY:
     // unrestricted setup helpers for isolated testing;
     // not part of a production reserve API.
@@ -161,6 +163,7 @@ contract ReserveStateModel {
         // convert amount → scaled debt using CURRENT borrowIndex
         uint256 scaledBorrowAmount = _actualDebtToScaledBorrow(amount);
 
+        _scaledDebt[msg.sender] += scaledBorrowAmount;
         state.totalScaledDebt += scaledBorrowAmount;
 
         state.availableLiquidity -= amount;
@@ -177,17 +180,21 @@ contract ReserveStateModel {
 
         ReserveState storage state = reserve;
 
-        uint256 debt = totalDebt();
+        uint256 userDebt = debtOf(msg.sender);
 
-        require(amount <= debt, CurrentDebtExceeded(amount, debt));
+        require(amount <= userDebt, CurrentDebtExceeded(amount, userDebt));
 
-        if (amount == debt) {
-            state.totalScaledDebt = 0;
+        if (amount == userDebt) {
+            uint256 userScaledDebt = _scaledDebt[msg.sender];
+
+            _scaledDebt[msg.sender] = 0;
+            state.totalScaledDebt -= userScaledDebt;
         } else {
             uint256 scaledRepayAmount = _actualDebtToScaledRepay(amount);
 
             require(scaledRepayAmount > 0, DebtReductionTooSmall(amount));
 
+            _scaledDebt[msg.sender] -= scaledRepayAmount;
             state.totalScaledDebt -= scaledRepayAmount;
         }
 
@@ -382,6 +389,21 @@ contract ReserveStateModel {
         uint256 currentIndex = previewBorrowIndex(block.timestamp);
 
         return Math.mulDiv(reserve.totalScaledDebt, currentIndex, WAD, Math.Rounding.Ceil);
+    }
+
+    // User debt
+    function scaledDebtOf(address user) external view returns (uint256) {
+        return _scaledDebt[user];
+    }
+
+    function debtOf(address user) public view returns (uint256) {
+        return Math.mulDiv(_scaledDebt[user], reserve.borrowIndex, WAD, Math.Rounding.Ceil);
+    }
+
+    function currentDebtOf(address user) external view returns (uint256) {
+        uint256 currentIndex = previewBorrowIndex(block.timestamp);
+
+        return Math.mulDiv(_scaledDebt[user], currentIndex, WAD, Math.Rounding.Ceil);
     }
 
     function _scaledDebtToActual(uint256 scaledDebt, uint256 index) internal pure returns (uint256) {
