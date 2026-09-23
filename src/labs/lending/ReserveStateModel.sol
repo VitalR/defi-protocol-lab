@@ -89,6 +89,7 @@ contract ReserveStateModel {
     }
 
     mapping(address user => uint256 scaledDebt) internal _scaledDebt;
+    mapping(address user => uint256 scaledSupply) internal _scaledSupply;
 
     // LAB ONLY:
     // unrestricted setup helpers for isolated testing;
@@ -214,6 +215,7 @@ contract ReserveStateModel {
 
         require(scaledMint > 0, SupplyTooSmall(amount));
 
+        _scaledSupply[msg.sender] += scaledMint;
         state.totalScaledSupply += scaledMint;
         state.availableLiquidity += amount;
 
@@ -227,17 +229,21 @@ contract ReserveStateModel {
 
         ReserveState storage state = reserve;
 
-        uint256 supply = totalSupply();
+        uint256 userSupply = supplyOf(msg.sender);
 
-        require(amount <= supply, WithdrawExceedsSupply(amount, supply));
+        require(amount <= userSupply, WithdrawExceedsSupply(amount, userSupply));
 
         require(amount <= state.availableLiquidity, InsufficientLiquidity(amount, state.availableLiquidity));
 
-        if (amount == supply) {
-            state.totalScaledSupply = 0;
+        if (amount == userSupply) {
+            uint256 userScaledSupply = _scaledSupply[msg.sender];
+
+            _scaledSupply[msg.sender] = 0;
+            state.totalScaledSupply -= userScaledSupply;
         } else {
             uint256 scaledBurn = _actualSupplyToScaledBurn(amount);
 
+            _scaledSupply[msg.sender] -= scaledBurn;
             state.totalScaledSupply -= scaledBurn;
         }
 
@@ -391,7 +397,7 @@ contract ReserveStateModel {
         return Math.mulDiv(reserve.totalScaledDebt, currentIndex, WAD, Math.Rounding.Ceil);
     }
 
-    // User debt
+    // User-level scaled debt accounting
     function scaledDebtOf(address user) external view returns (uint256) {
         return _scaledDebt[user];
     }
@@ -404,6 +410,21 @@ contract ReserveStateModel {
         uint256 currentIndex = previewBorrowIndex(block.timestamp);
 
         return Math.mulDiv(_scaledDebt[user], currentIndex, WAD, Math.Rounding.Ceil);
+    }
+
+    // User-level scaled supply accounting
+    function scaledSupplyOf(address user) external view returns (uint256) {
+        return _scaledSupply[user];
+    }
+
+    function supplyOf(address user) public view returns (uint256) {
+        return Math.mulDiv(_scaledSupply[user], reserve.liquidityIndex, WAD, Math.Rounding.Floor);
+    }
+
+    function currentSupplyOf(address user) external view returns (uint256) {
+        uint256 currentIndex = previewLiquidityIndex(block.timestamp);
+
+        return Math.mulDiv(_scaledSupply[user], currentIndex, WAD, Math.Rounding.Floor);
     }
 
     function _scaledDebtToActual(uint256 scaledDebt, uint256 index) internal pure returns (uint256) {

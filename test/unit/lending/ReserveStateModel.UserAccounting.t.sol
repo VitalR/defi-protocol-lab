@@ -9,6 +9,7 @@ contract ReserveStateModelUserAccountingTest is Test {
 
     address alice = address(0x1001);
     address bob = address(0x1002);
+    address borrower = address(0x1003);
 
     function setUp() public {
         reserveModel = new ReserveStateModel();
@@ -274,5 +275,243 @@ contract ReserveStateModelUserAccountingTest is Test {
 
     function _setBalancedReserveWithoutDebt() internal {
         reserveModel.setReserveState(0, 10_000e6, 10_000e6, 0.02e18, 0, 0.1e18);
+    }
+
+    // Alice supplies before Bob; Bob enters at a higher liquidityIndex.
+    // Bob does not receive Alice's historical yield.
+    function test_supply_user_accounting() public {
+        reserveModel.setReserveState(
+            0, // totalScaledDebt
+            0, // totalScaledSupply
+            0, // availableLiquidity
+            0.02e18,
+            0,
+            0.1e18
+        );
+
+        vm.prank(alice);
+        reserveModel.supply(10_000e6);
+
+        ReserveStateModel.ReserveState memory state = reserveModel.getReserveState();
+
+        assertEq(state.availableLiquidity, 10_000e6);
+        assertEq(state.totalScaledSupply, 10_000e6);
+        assertEq(reserveModel.supplyOf(alice), 10_000e6);
+        assertEq(reserveModel.scaledSupplyOf(alice), 10_000e6);
+
+        vm.prank(borrower);
+        reserveModel.borrow(8000e6);
+
+        state = reserveModel.getReserveState();
+
+        assertEq(state.borrowIndex, 1e18);
+        assertEq(state.liquidityIndex, 1e18);
+        assertEq(state.accruedToTreasury, 0e6);
+        assertEq(state.availableLiquidity, 2000e6);
+
+        assertEq(reserveModel.utilization(), 0.8e18);
+        assertEq(reserveModel.borrowRate(), 0.06e18);
+        assertEq(reserveModel.liquidityRate(), 0.0432e18);
+
+        skip(365 days);
+
+        vm.prank(bob);
+        reserveModel.supply(500e6);
+
+        state = reserveModel.getReserveState();
+
+        assertEq(reserveModel.scaledSupplyOf(alice), 10_000e6);
+        assertEq(reserveModel.currentSupplyOf(alice), 10_432e6);
+
+        assertEq(reserveModel.scaledSupplyOf(bob), 479_294_478);
+        assertEq(reserveModel.supplyOf(bob), 499_999_999);
+        assertEq(reserveModel.currentSupplyOf(bob), 499_999_999);
+        assertLt(reserveModel.supplyOf(bob), 500e6);
+
+        assertEq(state.totalScaledSupply, reserveModel.scaledSupplyOf(alice) + reserveModel.scaledSupplyOf(bob));
+
+        uint256 summedUserSupply = reserveModel.supplyOf(alice) + reserveModel.supplyOf(bob);
+        uint256 aggregateSupply = reserveModel.totalSupply();
+
+        assertLe(summedUserSupply, aggregateSupply);
+        assertLe(aggregateSupply - summedUserSupply, 1);
+
+        // one more year past - current supply without mutation
+        uint256 aliceStoredSupply = reserveModel.supplyOf(alice);
+        uint256 bobStoredSupply = reserveModel.supplyOf(bob);
+
+        skip(365 days);
+
+        assertEq(reserveModel.supplyOf(alice), aliceStoredSupply);
+        assertEq(reserveModel.supplyOf(bob), bobStoredSupply);
+
+        assertGt(reserveModel.currentSupplyOf(alice), aliceStoredSupply);
+        assertGt(reserveModel.currentSupplyOf(bob), bobStoredSupply);
+
+        // Σ floor(user claims)
+        // <=
+        // floor(Σ scaled supply × index)
+        uint256 summedCurrentSupply = reserveModel.currentSupplyOf(alice) + reserveModel.currentSupplyOf(bob);
+        uint256 aggregateCurrentSupply = reserveModel.currentTotalSupply();
+
+        assertLe(summedCurrentSupply, aggregateCurrentSupply);
+        assertLe(aggregateCurrentSupply - summedCurrentSupply, 1);
+    }
+
+    function test_withdraw_partial() public {
+        reserveModel.setReserveState(0, 0, 0, 0.02e18, 0, 0.1e18);
+
+        vm.prank(alice);
+        reserveModel.supply(10_000e6);
+
+        ReserveStateModel.ReserveState memory state = reserveModel.getReserveState();
+
+        assertEq(state.availableLiquidity, 10_000e6);
+        assertEq(state.totalScaledSupply, 10_000e6);
+        assertEq(reserveModel.supplyOf(alice), 10_000e6);
+        assertEq(reserveModel.scaledSupplyOf(alice), 10_000e6);
+
+        vm.prank(borrower);
+        reserveModel.borrow(8000e6);
+
+        state = reserveModel.getReserveState();
+
+        assertEq(state.borrowIndex, 1e18);
+        assertEq(state.liquidityIndex, 1e18);
+        assertEq(state.accruedToTreasury, 0e6);
+        assertEq(state.availableLiquidity, 2000e6);
+
+        assertEq(reserveModel.utilization(), 0.8e18);
+        assertEq(reserveModel.borrowRate(), 0.06e18);
+        assertEq(reserveModel.liquidityRate(), 0.0432e18);
+
+        skip(365 days);
+
+        vm.prank(bob);
+        reserveModel.supply(500e6);
+
+        state = reserveModel.getReserveState();
+
+        assertEq(state.availableLiquidity, 2500e6);
+
+        uint256 aliceScaledBefore = reserveModel.scaledSupplyOf(alice);
+        uint256 bobScaledBefore = reserveModel.scaledSupplyOf(bob);
+
+        uint256 withdrawAmount = 1000e6;
+
+        uint256 expectedScaledBurn = Math.mulDiv(withdrawAmount, 1e18, state.liquidityIndex, Math.Rounding.Ceil);
+
+        vm.prank(alice);
+        reserveModel.withdraw(withdrawAmount);
+
+        state = reserveModel.getReserveState();
+
+        assertEq(reserveModel.scaledSupplyOf(alice), aliceScaledBefore - expectedScaledBurn);
+
+        assertEq(reserveModel.scaledSupplyOf(bob), bobScaledBefore);
+
+        assertEq(state.totalScaledSupply, reserveModel.scaledSupplyOf(alice) + reserveModel.scaledSupplyOf(bob));
+
+        assertEq(state.availableLiquidity, 1500e6);
+    }
+
+    function test_withdraw_full() public {
+        reserveModel.setReserveState(0, 0, 0, 0.02e18, 0, 0.1e18);
+
+        vm.prank(alice);
+        reserveModel.supply(10_000e6);
+
+        ReserveStateModel.ReserveState memory state = reserveModel.getReserveState();
+
+        assertEq(state.availableLiquidity, 10_000e6);
+        assertEq(state.totalScaledSupply, 10_000e6);
+        assertEq(reserveModel.supplyOf(alice), 10_000e6);
+        assertEq(reserveModel.scaledSupplyOf(alice), 10_000e6);
+
+        vm.prank(borrower);
+        reserveModel.borrow(8000e6);
+
+        state = reserveModel.getReserveState();
+
+        assertEq(state.borrowIndex, 1e18);
+        assertEq(state.liquidityIndex, 1e18);
+        assertEq(state.accruedToTreasury, 0e6);
+        assertEq(state.availableLiquidity, 2000e6);
+
+        assertEq(reserveModel.utilization(), 0.8e18);
+        assertEq(reserveModel.borrowRate(), 0.06e18);
+        assertEq(reserveModel.liquidityRate(), 0.0432e18);
+
+        skip(365 days);
+
+        vm.prank(bob);
+        reserveModel.supply(500e6);
+
+        state = reserveModel.getReserveState();
+
+        assertEq(reserveModel.scaledSupplyOf(alice), 10_000e6);
+        assertEq(reserveModel.currentSupplyOf(alice), 10_432e6);
+
+        assertEq(reserveModel.scaledSupplyOf(bob), 479_294_478);
+
+        assertEq(state.totalScaledSupply, reserveModel.scaledSupplyOf(alice) + reserveModel.scaledSupplyOf(bob));
+
+        uint256 summedUserSupply = reserveModel.supplyOf(alice) + reserveModel.supplyOf(bob);
+        uint256 aggregateSupply = reserveModel.totalSupply();
+
+        assertLe(summedUserSupply, aggregateSupply);
+        assertLe(aggregateSupply - summedUserSupply, 1);
+
+        uint256 currentWithdrawableAlice = reserveModel.currentSupplyOf(alice);
+        assertGt(currentWithdrawableAlice, state.availableLiquidity);
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(ReserveStateModel.InsufficientLiquidity.selector, 10_432_000_000, 2_500_000_000)
+        );
+        reserveModel.withdraw(currentWithdrawableAlice);
+
+        uint256 borrowerDebt = reserveModel.currentDebtOf(borrower);
+
+        vm.prank(borrower);
+        reserveModel.repay(borrowerDebt);
+
+        uint256 aliceClaim = reserveModel.currentSupplyOf(alice);
+
+        vm.prank(alice);
+        reserveModel.withdraw(aliceClaim);
+
+        state = reserveModel.getReserveState();
+
+        assertEq(reserveModel.scaledSupplyOf(alice), 0e6);
+        assertEq(reserveModel.scaledSupplyOf(bob), 479_294_478);
+        assertEq(state.totalScaledSupply, 479_294_478);
+
+        assertEq(reserveModel.supplyOf(bob), 499_999_999);
+
+        assertEq(reserveModel.totalSupply(), 499_999_999);
+
+        // Bob claim          = 499,999,999
+        // treasury claim     =  48,000,000
+        // rounding surplus   =           1
+        //                     -----------
+        // available          = 548,000,000
+        //
+        // Bob claim + treasury accrual + 1 unit rounding surplus.
+        assertEq(state.availableLiquidity, 548_000_000);
+    }
+
+    function test_withdraw_revertsWhenUserSupplyExceeded() public {
+        reserveModel.setReserveState(0, 0, 0, 0.02e18, 0, 0.1e18);
+
+        vm.prank(alice);
+        reserveModel.supply(100e6);
+
+        vm.prank(bob);
+        reserveModel.supply(9900e6);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ReserveStateModel.WithdrawExceedsSupply.selector, 101e6, 100e6));
+        reserveModel.withdraw(101e6);
     }
 }

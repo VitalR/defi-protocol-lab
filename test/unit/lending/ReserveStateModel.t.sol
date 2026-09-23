@@ -352,7 +352,7 @@ contract ReserveStateModelTest is Test {
     }
 
     function test_withdraw() public {
-        _setBalancedReserveWithoutDebt();
+        _setBalancedReserveForWithdraw();
 
         reserveModel.borrow(8000e6);
 
@@ -423,7 +423,7 @@ contract ReserveStateModelTest is Test {
     }
 
     function test_withdraw_full_supply() public {
-        reserveModel.setReserveState(0e6, 10_000e6, 10_000e6, 0.06e18, 0.0432e18, 0.1e18);
+        _setBalancedReserveForWithdraw();
 
         // setup debt=0 / supply=10k / available=10k
         // → assert U=0
@@ -469,7 +469,7 @@ contract ReserveStateModelTest is Test {
     }
 
     function test_borrow_revertsWhenInsufficientLiquidity() public {
-        _setBalancedReserveWithoutDebt();
+        _setBalancedReserveForWithdraw();
 
         reserveModel.borrow(8000e6);
 
@@ -524,7 +524,7 @@ contract ReserveStateModelTest is Test {
     }
 
     function test_withdraw_revertsWhenWithdrawExceedsSupply() public {
-        _setBalancedReserveWithoutDebt();
+        _setBalancedReserveForWithdraw();
 
         reserveModel.borrow(8000e6);
         vm.expectRevert(abi.encodeWithSelector(ReserveStateModel.WithdrawExceedsSupply.selector, 10_001e6, 10_000e6));
@@ -532,7 +532,7 @@ contract ReserveStateModelTest is Test {
     }
 
     function test_withdraw_revertsWhenInsufficientLiquidity() public {
-        _setBalancedReserveWithoutDebt();
+        _setBalancedReserveForWithdraw();
 
         reserveModel.borrow(8000e6);
         vm.expectRevert(abi.encodeWithSelector(ReserveStateModel.InsufficientLiquidity.selector, 2001e6, 2000e6));
@@ -596,5 +596,10 @@ contract ReserveStateModelTest is Test {
 
     function _setBalancedReserveWithoutDebt() internal {
         reserveModel.setReserveState(0, 10_000e6, 10_000e6, 0.02e18, 0, 0.1e18);
+    }
+
+    function _setBalancedReserveForWithdraw() internal {
+        reserveModel.setReserveState(0, 0e6, 0e6, 0.02e18, 0, 0.1e18);
+        reserveModel.supply(10000e6);
     }
 }
