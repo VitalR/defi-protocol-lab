@@ -600,6 +600,6 @@ contract ReserveStateModelTest is Test {
 
     function _setBalancedReserveForWithdraw() internal {
         reserveModel.setReserveState(0, 0e6, 0e6, 0.02e18, 0, 0.1e18);
-        reserveModel.supply(10000e6);
+        reserveModel.supply(10_000e6);
     }
 }
