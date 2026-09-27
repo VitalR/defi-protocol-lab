@@ -15,6 +15,7 @@ contract IndexedLendingPoolTest is Test {
     address bob = address(0x1002);
 
     event Supplied(address indexed caller, address indexed onBehalfOf, uint256 actualAmount, uint256 scaledAmount);
+    event Withdrawn(address indexed user, address indexed to, uint256 actualAmount, uint256 scaledAmount);
 
     function setUp() public {
         usdc = new MockUSDC();
@@ -184,4 +185,149 @@ contract IndexedLendingPoolTest is Test {
         assertEq(usdc.balanceOf(alice), 100e6);
         assertEq(pool.SUPPLY_TOKEN().balanceOf(alice), 0e6);
     }
+
+    function test_withdraw_partial() public {
+        usdc.mint(alice, 1000e6);
+
+        vm.startPrank(alice);
+        usdc.approve(address(pool), 1000e6);
+        pool.supply(1000e6, alice);
+
+        vm.expectEmit(true, true, false, true);
+        emit Withdrawn(alice, alice, 400e6, 400e6);
+        pool.withdraw(400e6, alice);
+        vm.stopPrank();
+
+        ScaledSupplyToken supplyToken = pool.SUPPLY_TOKEN();
+
+        assertEq(usdc.balanceOf(alice), 400e6);
+        assertEq(usdc.balanceOf(address(pool)), 600e6);
+
+        assertEq(pool.availableLiquidity(), 600e6);
+
+        assertEq(supplyToken.scaledBalanceOf(alice), 600e6);
+        assertEq(supplyToken.balanceOf(alice), 600e6);
+
+        assertEq(supplyToken.totalSupply(), 600e6);
+        assertEq(pool.DEBT_TOKEN().totalSupply(), 0);
+
+        assertEq(pool.availableLiquidity(), usdc.balanceOf(address(pool)));
+    }
+
+    function test_withdraw_full() public {
+        usdc.mint(alice, 1000e6);
+
+        vm.startPrank(alice);
+        usdc.approve(address(pool), 1000e6);
+        pool.supply(1000e6, alice);
+
+        vm.expectEmit(true, true, false, true);
+        emit Withdrawn(alice, alice, 1000e6, 1000e6);
+        uint256 withdrawn = pool.withdraw(1000e6, alice);
+        vm.stopPrank();
+
+        assertEq(withdrawn, 1000e6);
+
+        ScaledSupplyToken supplyToken = pool.SUPPLY_TOKEN();
+
+        assertEq(usdc.balanceOf(alice), 1000e6);
+        assertEq(usdc.balanceOf(address(pool)), 0e6);
+
+        assertEq(pool.availableLiquidity(), 0e6);
+
+        assertEq(supplyToken.scaledBalanceOf(alice), 0e6);
+        assertEq(supplyToken.balanceOf(alice), 0e6);
+
+        assertEq(supplyToken.totalSupply(), 0e6);
+        assertEq(pool.DEBT_TOKEN().totalSupply(), 0);
+    }
+
+    function test_withdraw_toDifferentRecipient() public {
+        usdc.mint(alice, 1000e6);
+
+        vm.startPrank(alice);
+        usdc.approve(address(pool), 1000e6);
+        pool.supply(1000e6, alice);
+
+        vm.expectEmit(true, true, false, true);
+        emit Withdrawn(alice, bob, 400e6, 400e6);
+        pool.withdraw(400e6, bob);
+        vm.stopPrank();
+
+        ScaledSupplyToken supplyToken = pool.SUPPLY_TOKEN();
+
+        assertEq(usdc.balanceOf(alice), 0e6);
+        assertEq(usdc.balanceOf(bob), 400e6);
+        assertEq(usdc.balanceOf(address(pool)), 600e6);
+
+        assertEq(pool.availableLiquidity(), 600e6);
+
+        assertEq(supplyToken.scaledBalanceOf(alice), 600e6);
+        assertEq(supplyToken.balanceOf(alice), 600e6);
+
+        assertEq(supplyToken.totalSupply(), 600e6);
+        assertEq(pool.DEBT_TOKEN().totalSupply(), 0);
+
+        assertEq(pool.availableLiquidity(), usdc.balanceOf(address(pool)));
+    }
+
+    function test_withdraw_revertsWhenZeroAmount() public {
+        usdc.mint(alice, 1000e6);
+
+        vm.startPrank(alice);
+        usdc.approve(address(pool), 1000e6);
+        pool.supply(1000e6, alice);
+
+        vm.expectRevert(IndexedLendingPool.ZeroAmount.selector);
+        pool.withdraw(0e6, bob);
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(alice), 0e6);
+        assertEq(usdc.balanceOf(address(pool)), 1000e6);
+    }
+
+    function test_withdraw_revertsWhenZeroAddress() public {
+        usdc.mint(alice, 1000e6);
+
+        vm.startPrank(alice);
+        usdc.approve(address(pool), 1000e6);
+        pool.supply(1000e6, alice);
+
+        vm.expectRevert(IndexedLendingPool.ZeroAddress.selector);
+        pool.withdraw(400e6, address(0));
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(alice), 0e6);
+        assertEq(usdc.balanceOf(address(pool)), 1000e6);
+    }
+
+    function test_withdraw_revertsWhenWithdrawExceedsSupply() public {
+        usdc.mint(alice, 1000e6);
+
+        vm.startPrank(alice);
+        usdc.approve(address(pool), 1000e6);
+        pool.supply(1000e6, alice);
+
+        vm.expectRevert(abi.encodeWithSelector(IndexedLendingPool.WithdrawExceedsSupply.selector, 1001e6, 1000e6));
+        pool.withdraw(1001e6, alice);
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(alice), 0e6);
+        assertEq(usdc.balanceOf(address(pool)), 1000e6);
+    }
+
+    // function test_withdraw_revertsWhenInsufficientLiquidity() public {
+    //     usdc.mint(alice, 1000e6);
+
+    //     vm.startPrank(alice);
+    //     usdc.approve(address(pool), 1000e6);
+    //     pool.supply(100e6, alice);
+
+    //     vm.expectRevert(abi.encodeWithSelector(IndexedLendingPool.InsufficientLiquidity.selector, 101e6, 100e6));
+    //     pool.withdraw(101e6, alice);
+    //     vm.stopPrank();
+
+    //     assertEq(usdc.balanceOf(alice), 0e6);
+    //     assertEq(usdc.balanceOf(address(pool)), 1000e6);
+    // }
 }

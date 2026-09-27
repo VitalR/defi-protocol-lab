@@ -18,7 +18,11 @@ contract IndexedLendingPool is ILiquidityIndexProvider, IBorrowIndexProvider, Re
     error InvalidUnderlying(address underlying);
     error SupplyTooSmall(uint256 amount);
 
+    error WithdrawExceedsSupply(uint256 requested, uint256 available);
+    error InsufficientLiquidity(uint256 requested, uint256 available);
+
     event Supplied(address indexed caller, address indexed onBehalfOf, uint256 actualAmount, uint256 scaledAmount);
+    event Withdrawn(address indexed user, address indexed to, uint256 actualAmount, uint256 scaledAmount);
 
     IERC20Metadata public immutable UNDERLYING;
 
@@ -82,6 +86,55 @@ contract IndexedLendingPool is ILiquidityIndexProvider, IBorrowIndexProvider, Re
         SUPPLY_TOKEN.mintScaled(onBehalfOf, scaledAmount);
 
         emit Supplied(msg.sender, onBehalfOf, amount, scaledAmount);
+    }
+
+    // Withdraw lifecycle:
+
+    // validate
+    //     ↓
+    // settle indexes
+    //     ↓
+    // read caller's current aToken balance
+    //     ↓
+    // check user claim
+    //     ↓
+    // check available liquidity
+    //     ↓
+    // actual withdrawal → scaled burn using Ceil
+    //     ↓
+    // decrease accounting
+    //     ↓
+    // burn aTokens
+    //     ↓
+    // push exact underlying
+    function withdraw(uint256 amount, address to) external nonReentrant returns (uint256 withdrawnAmount) {
+        require(amount > 0, ZeroAmount());
+        require(to != address(0), ZeroAddress());
+
+        uint256 userSupply = SUPPLY_TOKEN.balanceOf(msg.sender);
+
+        require(amount <= userSupply, WithdrawExceedsSupply(amount, userSupply));
+
+        require(amount <= availableLiquidity, InsufficientLiquidity(amount, availableLiquidity));
+
+        uint256 scaledAmount;
+
+        if (amount == userSupply) {
+            // Full withdrawal must remove all scaled dust.
+            scaledAmount = SUPPLY_TOKEN.scaledBalanceOf(msg.sender);
+        } else {
+            scaledAmount = Math.mulDiv(amount, DecimalMath.WAD, _liquidityIndex, Math.Rounding.Ceil);
+        }
+
+        availableLiquidity -= amount;
+
+        SUPPLY_TOKEN.burnScaled(msg.sender, scaledAmount);
+
+        UNDERLYING.pushExact(to, amount);
+
+        emit Withdrawn(msg.sender, to, amount, scaledAmount);
+
+        withdrawnAmount = amount;
     }
 
     function currentLiquidityIndex() external view override returns (uint256) {
