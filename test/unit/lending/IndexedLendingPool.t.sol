@@ -11,6 +11,11 @@ contract IndexedLendingPoolTest is Test {
     IndexedLendingPool pool;
     MockUSDC usdc;
 
+    address alice = address(0x1001);
+    address bob = address(0x1002);
+
+    event Supplied(address indexed caller, address indexed onBehalfOf, uint256 actualAmount, uint256 scaledAmount);
+
     function setUp() public {
         usdc = new MockUSDC();
         pool = new IndexedLendingPool(address(usdc));
@@ -65,5 +70,118 @@ contract IndexedLendingPoolTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(ScaledDebtToken.OnlyPool.selector, address(this)));
         debtToken.mintScaled(address(this), 1000e6);
+    }
+
+    function test_supply() public {
+        usdc.mint(alice, 1000e6);
+
+        vm.startPrank(alice);
+        usdc.approve(address(pool), 1000e6);
+
+        vm.expectEmit(true, true, false, true);
+        emit Supplied(alice, alice, 1000e6, 1000e6);
+        pool.supply(1000e6, alice);
+        vm.stopPrank();
+
+        ScaledSupplyToken supplyToken = pool.SUPPLY_TOKEN();
+
+        assertEq(usdc.balanceOf(alice), 0e6);
+        assertEq(usdc.balanceOf(address(pool)), 1000e6);
+
+        assertEq(pool.availableLiquidity(), 1000e6);
+
+        assertEq(supplyToken.scaledBalanceOf(alice), 1000e6);
+        assertEq(supplyToken.balanceOf(alice), 1000e6);
+
+        assertEq(supplyToken.totalSupply(), 1000e6);
+        assertEq(pool.DEBT_TOKEN().totalSupply(), 0);
+
+        assertEq(pool.availableLiquidity(), usdc.balanceOf(address(pool)));
+    }
+
+    function test_supply_onBehalfOf() public {
+        usdc.mint(alice, 1000e6);
+
+        vm.startPrank(alice);
+        usdc.approve(address(pool), 1000e6);
+
+        vm.expectEmit(true, true, false, true);
+        emit Supplied(alice, bob, 1000e6, 1000e6);
+        pool.supply(1000e6, bob);
+        vm.stopPrank();
+
+        ScaledSupplyToken supplyToken = pool.SUPPLY_TOKEN();
+
+        assertEq(usdc.balanceOf(alice), 0e6);
+        assertEq(usdc.balanceOf(address(pool)), 1000e6);
+
+        assertEq(pool.availableLiquidity(), 1000e6);
+
+        assertEq(supplyToken.scaledBalanceOf(alice), 0e6);
+        assertEq(supplyToken.balanceOf(alice), 0e6);
+
+        assertEq(supplyToken.scaledBalanceOf(bob), 1000e6);
+        assertEq(supplyToken.balanceOf(bob), 1000e6);
+
+        assertEq(supplyToken.totalSupply(), 1000e6);
+        assertEq(pool.DEBT_TOKEN().totalSupply(), 0);
+
+        assertEq(pool.availableLiquidity(), usdc.balanceOf(address(pool)));
+    }
+
+    function test_supply_revertsWhenZeroAddress() public {
+        usdc.mint(alice, 1000e6);
+
+        vm.startPrank(alice);
+        usdc.approve(address(pool), 1000e6);
+
+        vm.expectRevert(IndexedLendingPool.ZeroAddress.selector);
+        pool.supply(1000e6, address(0));
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(alice), 1000e6);
+        assertEq(pool.SUPPLY_TOKEN().balanceOf(alice), 0e6);
+    }
+
+    function test_supply_revertsWhenZeroAmount() public {
+        usdc.mint(alice, 1000e6);
+
+        vm.startPrank(alice);
+        usdc.approve(address(pool), 1000e6);
+
+        vm.expectRevert(IndexedLendingPool.ZeroAmount.selector);
+        pool.supply(0e6, address(alice));
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(alice), 1000e6);
+        assertEq(pool.SUPPLY_TOKEN().balanceOf(alice), 0e6);
+    }
+
+    function test_supply_revertsWhenInsufficientAllowance() public {
+        usdc.mint(alice, 1000e6);
+
+        vm.startPrank(alice);
+        usdc.approve(address(pool), 100e6);
+
+        vm.expectRevert(); //ERC20InsufficientAllowance
+        pool.supply(101e6, address(alice));
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(alice), 1000e6);
+        assertEq(pool.SUPPLY_TOKEN().balanceOf(alice), 0e6);
+    }
+
+    function test_supply_revertsWhenInsufficientUnderlying() public {
+        usdc.mint(alice, 100e6);
+
+        vm.startPrank(alice);
+        usdc.approve(address(pool), 1000e6);
+
+        vm.expectRevert(); //ERC20InsufficientBalance
+        pool.supply(1000e6, address(alice));
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(alice), 100e6);
+        assertEq(pool.SUPPLY_TOKEN().balanceOf(alice), 0e6);
     }
 }
