@@ -13,9 +13,12 @@ contract IndexedLendingPoolTest is Test {
 
     address alice = address(0x1001);
     address bob = address(0x1002);
+    address borrower = address(0x1003);
 
     event Supplied(address indexed caller, address indexed onBehalfOf, uint256 actualAmount, uint256 scaledAmount);
     event Withdrawn(address indexed user, address indexed to, uint256 actualAmount, uint256 scaledAmount);
+    event Borrowed(address indexed borrower, address indexed recipient, uint256 actualAmount, uint256 scaledAmount);
+    event Repayed(address indexed payer, address indexed onBehalfOf, uint256 actualAmount, uint256 scaledAmount);
 
     function setUp() public {
         usdc = new MockUSDC();
@@ -316,18 +319,242 @@ contract IndexedLendingPoolTest is Test {
         assertEq(usdc.balanceOf(address(pool)), 1000e6);
     }
 
-    // function test_withdraw_revertsWhenInsufficientLiquidity() public {
-    //     usdc.mint(alice, 1000e6);
+    function test_withdraw_revertsWhenInsufficientLiquidity() public {
+        _supplyAlice(1000e6);
 
-    //     vm.startPrank(alice);
-    //     usdc.approve(address(pool), 1000e6);
-    //     pool.supply(100e6, alice);
+        vm.prank(borrower);
+        pool.borrow(800e6, borrower);
 
-    //     vm.expectRevert(abi.encodeWithSelector(IndexedLendingPool.InsufficientLiquidity.selector, 101e6, 100e6));
-    //     pool.withdraw(101e6, alice);
-    //     vm.stopPrank();
+        assertEq(pool.SUPPLY_TOKEN().balanceOf(alice), 1000e6);
 
-    //     assertEq(usdc.balanceOf(alice), 0e6);
-    //     assertEq(usdc.balanceOf(address(pool)), 1000e6);
-    // }
+        assertEq(pool.availableLiquidity(), 200e6);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IndexedLendingPool.InsufficientLiquidity.selector, 300e6, 200e6));
+
+        pool.withdraw(300e6, alice);
+
+        // Failed withdrawal preserves all accounting
+        assertEq(pool.SUPPLY_TOKEN().balanceOf(alice), 1000e6);
+
+        assertEq(pool.availableLiquidity(), 200e6);
+        assertEq(usdc.balanceOf(address(pool)), 200e6);
+        assertEq(pool.DEBT_TOKEN().balanceOf(borrower), 800e6);
+    }
+
+    function _supplyAlice(uint256 amount) internal {
+        usdc.mint(alice, amount);
+
+        vm.startPrank(alice);
+        usdc.approve(address(pool), amount);
+        pool.supply(amount, alice);
+        vm.stopPrank();
+    }
+
+    function test_borrow() public {
+        _supplyAlice(1000e6);
+
+        vm.prank(borrower);
+        vm.expectEmit(true, true, false, true);
+        emit Borrowed(borrower, borrower, 400e6, 400e6);
+        pool.borrow(400e6, borrower);
+
+        ScaledSupplyToken supplyToken = pool.SUPPLY_TOKEN();
+
+        ScaledDebtToken debtToken = pool.DEBT_TOKEN();
+
+        // Cash flow
+        assertEq(usdc.balanceOf(borrower), 400e6);
+        assertEq(usdc.balanceOf(address(pool)), 600e6);
+        assertEq(pool.availableLiquidity(), 600e6);
+
+        // Supplier position remains unchanged
+        assertEq(supplyToken.balanceOf(alice), 1000e6);
+        assertEq(supplyToken.totalSupply(), 1000e6);
+
+        // Borrower owns the debt
+        assertEq(debtToken.scaledBalanceOf(borrower), 400e6);
+
+        assertEq(debtToken.balanceOf(borrower), 400e6);
+        assertEq(debtToken.totalSupply(), 400e6);
+
+        // Cash accounting
+        assertEq(pool.availableLiquidity(), usdc.balanceOf(address(pool)));
+
+        // At index = 1 and before interest:
+        // supplier claims = liquid cash + borrower receivable
+        assertEq(supplyToken.totalSupply(), pool.availableLiquidity() + debtToken.totalSupply());
+    }
+
+    function test_borrow_toDifferentRecipient() public {
+        _supplyAlice(1000e6);
+
+        vm.prank(borrower);
+        vm.expectEmit(true, true, false, true);
+        emit Borrowed(borrower, bob, 400e6, 400e6);
+        pool.borrow(400e6, bob);
+
+        assertEq(usdc.balanceOf(bob), 400e6);
+        assertEq(usdc.balanceOf(borrower), 0e6);
+        assertEq(usdc.balanceOf(address(pool)), 600e6);
+        assertEq(pool.availableLiquidity(), 600e6);
+
+        // Recipient gets cash, caller gets debt
+        assertEq(pool.DEBT_TOKEN().balanceOf(bob), 0e6);
+        assertEq(pool.DEBT_TOKEN().balanceOf(borrower), 400e6);
+    }
+
+    function test_borrow_revertsWhenZeroAmount() public {
+        vm.prank(borrower);
+        vm.expectRevert(IndexedLendingPool.ZeroAmount.selector);
+        pool.borrow(0, borrower);
+    }
+
+    function test_borrow_revertsWhenRecipientIsZero() public {
+        vm.prank(borrower);
+        vm.expectRevert(IndexedLendingPool.ZeroAddress.selector);
+        pool.borrow(100e6, address(0));
+    }
+
+    function test_borrow_revertsWhenInsufficientLiquidity() public {
+        _supplyAlice(1000e6);
+
+        vm.prank(borrower);
+        vm.expectRevert(abi.encodeWithSelector(IndexedLendingPool.InsufficientLiquidity.selector, 1001e6, 1000e6));
+
+        pool.borrow(1001e6, borrower);
+
+        assertEq(pool.availableLiquidity(), 1000e6);
+        assertEq(usdc.balanceOf(address(pool)), 1000e6);
+        assertEq(pool.DEBT_TOKEN().balanceOf(borrower), 0);
+    }
+
+    function test_repay() public {
+        _supplyAlice(1000e6);
+
+        vm.startPrank(borrower);
+        pool.borrow(500e6, borrower);
+
+        assertEq(usdc.balanceOf(borrower), 500e6);
+        assertEq(usdc.balanceOf(address(pool)), 500e6);
+        assertEq(pool.availableLiquidity(), 500e6);
+
+        usdc.approve(address(pool), 300e6);
+
+        vm.expectEmit(true, true, false, true);
+        emit Repayed(borrower, borrower, 300e6, 300e6);
+        pool.repay(300e6, borrower);
+
+        vm.stopPrank();
+
+        ScaledSupplyToken supplyToken = pool.SUPPLY_TOKEN();
+        ScaledDebtToken debtToken = pool.DEBT_TOKEN();
+
+        assertEq(usdc.balanceOf(borrower), 200e6);
+        assertEq(usdc.balanceOf(address(pool)), 800e6);
+        assertEq(pool.availableLiquidity(), 800e6);
+
+        assertEq(debtToken.scaledBalanceOf(borrower), 200e6);
+
+        assertEq(debtToken.balanceOf(borrower), 200e6);
+        assertEq(debtToken.totalSupply(), 200e6);
+
+        assertEq(pool.availableLiquidity(), usdc.balanceOf(address(pool)));
+
+        assertEq(supplyToken.totalSupply(), pool.availableLiquidity() + debtToken.totalSupply());
+    }
+
+    function test_repay_onBehalfOf() public {
+        _supplyAlice(1000e6);
+
+        vm.prank(borrower);
+        pool.borrow(400e6, bob);
+
+        assertEq(usdc.balanceOf(bob), 400e6);
+        assertEq(usdc.balanceOf(borrower), 0e6);
+        assertEq(usdc.balanceOf(address(pool)), 600e6);
+        assertEq(pool.availableLiquidity(), 600e6);
+
+        assertEq(pool.DEBT_TOKEN().balanceOf(bob), 0e6);
+        assertEq(pool.DEBT_TOKEN().balanceOf(borrower), 400e6);
+
+        vm.startPrank(bob);
+        usdc.approve(address(pool), 300e6);
+        pool.repay(300e6, borrower);
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(bob), 100e6);
+        assertEq(usdc.balanceOf(borrower), 0e6);
+        assertEq(usdc.balanceOf(address(pool)), 900e6);
+        assertEq(pool.availableLiquidity(), 900e6);
+
+        assertEq(pool.DEBT_TOKEN().balanceOf(borrower), 100e6);
+        assertEq(pool.DEBT_TOKEN().totalSupply(), 100e6);
+
+        assertEq(pool.availableLiquidity(), usdc.balanceOf(address(pool)));
+
+        assertEq(pool.SUPPLY_TOKEN().totalSupply(), pool.availableLiquidity() + pool.DEBT_TOKEN().totalSupply());
+    }
+
+    function test_repay_revertsWhenZeroAmount() public {
+        vm.prank(borrower);
+        vm.expectRevert(IndexedLendingPool.ZeroAmount.selector);
+        pool.repay(0, borrower);
+    }
+
+    function test_repay_revertsWhenRecipientIsZero() public {
+        vm.prank(borrower);
+        vm.expectRevert(IndexedLendingPool.ZeroAddress.selector);
+        pool.repay(100e6, address(0));
+    }
+
+    function test_repay_revertsWhenCurrentDebtExceeded() public {
+        _supplyAlice(1000e6);
+
+        vm.prank(borrower);
+        pool.borrow(400e6, bob);
+
+        assertEq(usdc.balanceOf(bob), 400e6);
+        assertEq(usdc.balanceOf(borrower), 0e6);
+        assertEq(usdc.balanceOf(address(pool)), 600e6);
+        assertEq(pool.availableLiquidity(), 600e6);
+
+        vm.prank(bob);
+        usdc.approve(address(pool), 401e6);
+
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(IndexedLendingPool.CurrentDebtExceeded.selector, 401e6, 400e6));
+        pool.repay(401e6, borrower);
+
+        assertEq(usdc.balanceOf(bob), 400e6);
+        assertEq(usdc.balanceOf(borrower), 0e6);
+        assertEq(usdc.balanceOf(address(pool)), 600e6);
+        assertEq(pool.availableLiquidity(), 600e6);
+    }
+
+    function test_repay_full() public {
+        _supplyAlice(1000e6);
+
+        vm.startPrank(borrower);
+        pool.borrow(500e6, borrower);
+
+        assertEq(usdc.balanceOf(borrower), 500e6);
+        assertEq(usdc.balanceOf(address(pool)), 500e6);
+        assertEq(pool.availableLiquidity(), 500e6);
+
+        usdc.approve(address(pool), 500e6);
+        pool.repay(500e6, borrower);
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(borrower), 0e6);
+        assertEq(usdc.balanceOf(address(pool)), 1000e6);
+        assertEq(pool.availableLiquidity(), 1000e6);
+
+        assertEq(pool.DEBT_TOKEN().balanceOf(borrower), 0e6);
+        assertEq(pool.DEBT_TOKEN().totalSupply(), 0e6);
+
+        assertEq(pool.availableLiquidity(), usdc.balanceOf(address(pool)));
+
+        assertEq(pool.SUPPLY_TOKEN().totalSupply(), pool.availableLiquidity() + pool.DEBT_TOKEN().totalSupply());
+    }
 }

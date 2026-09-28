@@ -21,8 +21,13 @@ contract IndexedLendingPool is ILiquidityIndexProvider, IBorrowIndexProvider, Re
     error WithdrawExceedsSupply(uint256 requested, uint256 available);
     error InsufficientLiquidity(uint256 requested, uint256 available);
 
+    error CurrentDebtExceeded(uint256 amount, uint256 debt);
+    error DebtReductionTooSmall(uint256 amount);
+
     event Supplied(address indexed caller, address indexed onBehalfOf, uint256 actualAmount, uint256 scaledAmount);
     event Withdrawn(address indexed user, address indexed to, uint256 actualAmount, uint256 scaledAmount);
+    event Borrowed(address indexed borrower, address indexed recipient, uint256 actualAmount, uint256 scaledAmount);
+    event Repayed(address indexed payer, address indexed onBehalfOf, uint256 actualAmount, uint256 scaledAmount);
 
     IERC20Metadata public immutable UNDERLYING;
 
@@ -135,6 +140,56 @@ contract IndexedLendingPool is ILiquidityIndexProvider, IBorrowIndexProvider, Re
         emit Withdrawn(msg.sender, to, amount, scaledAmount);
 
         withdrawnAmount = amount;
+    }
+
+    function borrow(uint256 amount, address to) external nonReentrant {
+        // Checks
+        require(amount > 0, ZeroAmount());
+        require(to != address(0), ZeroAddress());
+
+        require(amount <= availableLiquidity, InsufficientLiquidity(amount, availableLiquidity));
+
+        uint256 scaledAmount = Math.mulDiv(amount, DecimalMath.WAD, _borrowIndex, Math.Rounding.Ceil);
+
+        // Effects
+        availableLiquidity -= amount;
+
+        // Trusted position-token interaction
+        DEBT_TOKEN.mintScaled(msg.sender, scaledAmount);
+
+        // External underlying transfer is last
+        UNDERLYING.pushExact(to, amount);
+
+        emit Borrowed(msg.sender, to, amount, scaledAmount);
+    }
+
+    function repay(uint256 amount, address onBehalfOf) external nonReentrant {
+        require(amount > 0, ZeroAmount());
+        require(onBehalfOf != address(0), ZeroAddress());
+
+        uint256 userDebt = DEBT_TOKEN.balanceOf(onBehalfOf);
+
+        require(amount <= userDebt, CurrentDebtExceeded(amount, userDebt));
+
+        uint256 scaledAmount;
+
+        if (amount == userDebt) {
+            // Full repayment clears all scaled dust
+            scaledAmount = DEBT_TOKEN.scaledBalanceOf(onBehalfOf);
+        } else {
+            scaledAmount = Math.mulDiv(amount, DecimalMath.WAD, _borrowIndex, Math.Rounding.Floor);
+        }
+
+        // Effects
+        availableLiquidity += amount;
+
+        // Burn debt belonging to onBehalfOf
+        DEBT_TOKEN.burnScaled(onBehalfOf, scaledAmount);
+
+        // The caller always provides underlying
+        UNDERLYING.pullExact(msg.sender, amount);
+
+        emit Repayed(msg.sender, onBehalfOf, amount, scaledAmount);
     }
 
     function currentLiquidityIndex() external view override returns (uint256) {
