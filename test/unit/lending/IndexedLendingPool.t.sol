@@ -18,7 +18,7 @@ contract IndexedLendingPoolTest is Test {
     event Supplied(address indexed caller, address indexed onBehalfOf, uint256 actualAmount, uint256 scaledAmount);
     event Withdrawn(address indexed user, address indexed to, uint256 actualAmount, uint256 scaledAmount);
     event Borrowed(address indexed borrower, address indexed recipient, uint256 actualAmount, uint256 scaledAmount);
-    event Repayed(address indexed payer, address indexed onBehalfOf, uint256 actualAmount, uint256 scaledAmount);
+    event Repaid(address indexed payer, address indexed onBehalfOf, uint256 actualAmount, uint256 scaledAmount);
 
     function setUp() public {
         usdc = new MockUSDC();
@@ -42,6 +42,22 @@ contract IndexedLendingPoolTest is Test {
 
         assertEq(supplyToken.symbol(), "aUSDC");
         assertEq(debtToken.symbol(), "vdUSDC");
+    }
+
+    function test_constructor_reserveState() public view {
+        IndexedLendingPool.ReserveState memory state = pool.getReserveState();
+
+        assertEq(state.borrowIndex, 1e18);
+        assertEq(state.liquidityIndex, 1e18);
+
+        assertEq(state.availableLiquidity, 0);
+        assertEq(state.accruedToTreasury, 0);
+
+        assertEq(state.currentBorrowRate, 0.02e18);
+        assertEq(state.currentLiquidityRate, 0);
+
+        assertEq(state.reserveFactor, 0.1e18);
+        assertEq(state.lastUpdateTimestamp, block.timestamp);
     }
 
     function test_constructor_revertsWhenUnderlyingIsZero() public {
@@ -442,7 +458,7 @@ contract IndexedLendingPoolTest is Test {
         usdc.approve(address(pool), 300e6);
 
         vm.expectEmit(true, true, false, true);
-        emit Repayed(borrower, borrower, 300e6, 300e6);
+        emit Repaid(borrower, borrower, 300e6, 300e6);
         pool.repay(300e6, borrower);
 
         vm.stopPrank();
@@ -556,5 +572,162 @@ contract IndexedLendingPoolTest is Test {
         assertEq(pool.availableLiquidity(), usdc.balanceOf(address(pool)));
 
         assertEq(pool.SUPPLY_TOKEN().totalSupply(), pool.availableLiquidity() + pool.DEBT_TOKEN().totalSupply());
+    }
+
+    //////////////// ReserveState tests ////////////////
+
+    function test_supply_updatesReserveLiquidity() public {
+        _supplyAlice(1000e6);
+
+        IndexedLendingPool.ReserveState memory state = pool.getReserveState();
+
+        assertEq(state.availableLiquidity, 1000e6);
+        assertEq(pool.availableLiquidity(), 1000e6);
+
+        assertEq(state.availableLiquidity, usdc.balanceOf(address(pool)));
+    }
+
+    function test_borrow_updatesRates_atOptimalUtilization() public {
+        _supplyAlice(10_000e6);
+
+        vm.prank(borrower);
+        pool.borrow(8000e6, borrower);
+
+        IndexedLendingPool.ReserveState memory state = pool.getReserveState();
+
+        assertEq(state.availableLiquidity, 2000e6);
+
+        assertEq(pool.utilization(), 0.8e18);
+        assertEq(state.currentBorrowRate, 0.06e18);
+        assertEq(state.currentLiquidityRate, 0.0432e18);
+    }
+
+    function test_accrualLifecycle_afterOneYear() public {
+        _supplyAlice(10_000e6);
+
+        vm.prank(borrower);
+        pool.borrow(8000e6, borrower);
+
+        skip(365 days);
+
+        usdc.mint(bob, 500e6);
+
+        vm.startPrank(bob);
+        usdc.approve(address(pool), 500e6);
+        pool.supply(500e6, bob);
+        vm.stopPrank();
+
+        IndexedLendingPool.ReserveState memory state = pool.getReserveState();
+
+        assertEq(state.borrowIndex, 1.06e18);
+        assertEq(state.liquidityIndex, 1.0432e18);
+        assertEq(state.accruedToTreasury, 48e6);
+
+        assertEq(pool.DEBT_TOKEN().balanceOf(borrower), 8480e6);
+
+        assertEq(pool.SUPPLY_TOKEN().balanceOf(alice), 10_432e6);
+
+        assertEq(pool.SUPPLY_TOKEN().scaledBalanceOf(bob), 479_294_478);
+
+        uint256 assets = pool.availableLiquidity() + pool.totalDebt();
+
+        state = pool.getReserveState();
+
+        uint256 liabilities = pool.totalSupply() + state.accruedToTreasury;
+
+        assertApproxEqAbs(assets, liabilities, 2);
+    }
+
+    function test_repay_revertsWhenDebtReductionTooSmall() public {
+        _supplyAlice(10_000e6);
+
+        vm.prank(borrower);
+        pool.borrow(8000e6, borrower);
+
+        skip(365 days);
+
+        usdc.mint(borrower, 1);
+
+        vm.startPrank(borrower);
+        usdc.approve(address(pool), 1);
+
+        // floor(1 × WAD / 1.06e18) = 0
+
+        vm.expectRevert(abi.encodeWithSelector(IndexedLendingPool.DebtReductionTooSmall.selector, 1));
+
+        pool.repay(1, borrower);
+        vm.stopPrank();
+    }
+
+    function test_repay_full_afterIndexGrowth() public {
+        _supplyAlice(1000e6);
+
+        vm.startPrank(borrower);
+        pool.borrow(500e6, borrower);
+
+        skip(365 days);
+
+        uint256 fullDebt = pool.DEBT_TOKEN().balanceOf(borrower);
+
+        usdc.mint(borrower, fullDebt - usdc.balanceOf(borrower));
+
+        usdc.approve(address(pool), fullDebt);
+        pool.repay(fullDebt, borrower);
+        vm.stopPrank();
+
+        assertEq(pool.DEBT_TOKEN().scaledBalanceOf(borrower), 0);
+        assertEq(pool.DEBT_TOKEN().balanceOf(borrower), 0);
+
+        assertEq(usdc.balanceOf(address(pool)), 1_022_500_000);
+        assertEq(pool.availableLiquidity(), 1_022_500_000);
+
+        assertEq(pool.availableLiquidity(), usdc.balanceOf(address(pool)));
+
+        IndexedLendingPool.ReserveState memory state = pool.getReserveState();
+
+        assertEq(
+            pool.SUPPLY_TOKEN().totalSupply() + state.accruedToTreasury,
+            pool.availableLiquidity() + pool.DEBT_TOKEN().totalSupply()
+        );
+    }
+
+    function test_repay_revertsWhenInsufficientAllowance() public {
+        _supplyAlice(1000e6);
+
+        vm.startPrank(borrower);
+        pool.borrow(500e6, borrower);
+
+        uint256 debtBefore = pool.DEBT_TOKEN().balanceOf(borrower);
+
+        uint256 liquidityBefore = pool.availableLiquidity();
+
+        vm.expectRevert(); //ERC20InsufficientAllowance
+        pool.repay(100e6, borrower);
+        vm.stopPrank();
+
+        // Repay pull failure rolls everything back
+        assertEq(pool.DEBT_TOKEN().balanceOf(borrower), debtBefore);
+
+        assertEq(pool.availableLiquidity(), liquidityBefore);
+    }
+
+    function test_directDonation_isNotAccountedLiquidity() public {
+        _supplyAlice(1000e6);
+
+        vm.prank(borrower);
+        pool.borrow(500e6, borrower);
+
+        uint256 utilizationBefore = pool.utilization();
+        uint256 borrowRateBefore = pool.borrowRate();
+
+        usdc.mint(address(this), 100e6);
+        usdc.transfer(address(pool), 100e6);
+
+        // Donations should not change lending rates
+        assertEq(pool.availableLiquidity(), 500e6);
+        assertEq(pool.unaccountedCash(), 100e6);
+        assertEq(pool.utilization(), utilizationBefore);
+        assertEq(pool.borrowRate(), borrowRateBefore);
+
     }
 }
