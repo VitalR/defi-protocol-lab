@@ -26,6 +26,11 @@ fs_permissions = [
   { access = "read-write", path = "./deployment" },
 ]
 
+[invariant]
+runs = 256
+depth = 64
+fail_on_revert = true
+
 [rpc_endpoints]
 mainnet = "${MAINNET_RPC_URL}"
 

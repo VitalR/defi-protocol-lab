@@ -2,7 +2,9 @@
 pragma solidity ^0.8.35;
 
 import { Test } from "@forge-std/Test.sol";
-import { IndexedLendingPool } from "src/labs/lending/IndexedLendingPool.sol";
+import "forge-std/console.sol"; // Import the console library
+
+import { IndexedLendingPool, Math } from "src/labs/lending/IndexedLendingPool.sol";
 import { ScaledSupplyToken } from "src/labs/lending/tokens/ScaledSupplyToken.sol";
 import { ScaledDebtToken } from "src/labs/lending/tokens/ScaledDebtToken.sol";
 import { MockUSDC } from "test/mocks/MockUSDC.sol";
@@ -367,6 +369,15 @@ contract IndexedLendingPoolTest is Test {
         vm.stopPrank();
     }
 
+    function _supplyBob(uint256 amount) internal {
+        usdc.mint(bob, amount);
+
+        vm.startPrank(bob);
+        usdc.approve(address(pool), amount);
+        pool.supply(amount, bob);
+        vm.stopPrank();
+    }
+
     function test_borrow() public {
         _supplyAlice(1000e6);
 
@@ -667,8 +678,10 @@ contract IndexedLendingPoolTest is Test {
 
         skip(365 days);
 
-        uint256 fullDebt = pool.DEBT_TOKEN().balanceOf(borrower);
+        uint256 borrowRateBefore = pool.borrowRate();
+        uint256 liquidityRateBefore = pool.liquidityRate();
 
+        uint256 fullDebt = pool.DEBT_TOKEN().balanceOf(borrower);
         usdc.mint(borrower, fullDebt - usdc.balanceOf(borrower));
 
         usdc.approve(address(pool), fullDebt);
@@ -689,6 +702,9 @@ contract IndexedLendingPoolTest is Test {
             pool.SUPPLY_TOKEN().totalSupply() + state.accruedToTreasury,
             pool.availableLiquidity() + pool.DEBT_TOKEN().totalSupply()
         );
+
+        assertLt(pool.borrowRate(), borrowRateBefore);
+        assertLt(pool.liquidityRate(), liquidityRateBefore);
     }
 
     function test_repay_revertsWhenInsufficientAllowance() public {
@@ -697,11 +713,15 @@ contract IndexedLendingPoolTest is Test {
         vm.startPrank(borrower);
         pool.borrow(500e6, borrower);
 
+        skip(365 days);
+
         uint256 debtBefore = pool.DEBT_TOKEN().balanceOf(borrower);
 
         uint256 liquidityBefore = pool.availableLiquidity();
 
-        vm.expectRevert(); //ERC20InsufficientAllowance
+        IndexedLendingPool.ReserveState memory beforeState = pool.getReserveState();
+
+        vm.expectRevert(); //abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, 0, 100000000)
         pool.repay(100e6, borrower);
         vm.stopPrank();
 
@@ -709,6 +729,13 @@ contract IndexedLendingPoolTest is Test {
         assertEq(pool.DEBT_TOKEN().balanceOf(borrower), debtBefore);
 
         assertEq(pool.availableLiquidity(), liquidityBefore);
+
+        IndexedLendingPool.ReserveState memory afterState = pool.getReserveState();
+
+        assertEq(afterState.borrowIndex, beforeState.borrowIndex);
+        assertEq(afterState.liquidityIndex, beforeState.liquidityIndex);
+        assertEq(afterState.accruedToTreasury, beforeState.accruedToTreasury);
+        assertEq(afterState.lastUpdateTimestamp, beforeState.lastUpdateTimestamp);
     }
 
     function test_directDonation_isNotAccountedLiquidity() public {
@@ -729,5 +756,158 @@ contract IndexedLendingPoolTest is Test {
         assertEq(pool.utilization(), utilizationBefore);
         assertEq(pool.borrowRate(), borrowRateBefore);
 
+        assertEq(usdc.balanceOf(address(pool)), 600e6);
+
+        assertEq(usdc.balanceOf(address(pool)), pool.availableLiquidity() + pool.unaccountedCash());
+    }
+
+    function test_secondInterval_accruesUsingRatesStoredAfterPreviousAction() public {
+        _supplyAlice(10_000e6);
+
+        vm.prank(borrower);
+        pool.borrow(8000e6, borrower);
+
+        skip(365 days);
+
+        _supplyBob(500e6);
+
+        IndexedLendingPool.ReserveState memory firstState = pool.getReserveState();
+
+        assertEq(firstState.borrowIndex, 1.06e18);
+        assertEq(firstState.liquidityIndex, 1.0432e18);
+
+        uint256 secondIntervalBorrowRate = firstState.currentBorrowRate;
+        uint256 secondIntervalLiquidityRate = firstState.currentLiquidityRate;
+
+        skip(365 days);
+
+        uint256 previewBorrowIndex = pool.currentBorrowIndex();
+        uint256 previewLiquidityIndex = pool.currentLiquidityIndex();
+
+        _supplyBob(100e6);
+
+        IndexedLendingPool.ReserveState memory secondState = pool.getReserveState();
+
+        assertEq(secondState.borrowIndex, previewBorrowIndex);
+        assertEq(secondState.liquidityIndex, previewLiquidityIndex);
+
+        assertGt(secondIntervalBorrowRate, 0);
+        assertGt(secondIntervalLiquidityRate, 0);
+    }
+
+    function test_repay_partial_afterIndexGrowth() public {
+        _supplyAlice(10_000e6);
+
+        vm.startPrank(borrower);
+        pool.borrow(8000e6, borrower);
+
+        skip(365 days);
+
+        usdc.approve(address(pool), 500e6);
+
+        uint256 debtBefore = pool.DEBT_TOKEN().balanceOf(borrower);
+        uint256 scaledBefore = pool.DEBT_TOKEN().scaledBalanceOf(borrower);
+
+        pool.repay(500e6, borrower);
+        vm.stopPrank();
+
+        uint256 expectedScaledBurn = Math.mulDiv(500e6, 1e18, 1.06e18, Math.Rounding.Floor);
+
+        assertEq(pool.DEBT_TOKEN().scaledBalanceOf(borrower), scaledBefore - expectedScaledBurn);
+
+        uint256 debtAfter = pool.DEBT_TOKEN().balanceOf(borrower);
+
+        assertLe(debtBefore - debtAfter, 500e6);
+        assertLe(500e6 - (debtBefore - debtAfter), 1);
+    }
+
+    function test_withdraw_afterIndexGrowth() public {
+        _supplyAlice(10_000e6);
+
+        uint256 borrowRateAfterSupply = pool.borrowRate();
+        uint256 liquidityRateAfteSupply = pool.liquidityRate();
+
+        vm.prank(borrower);
+        pool.borrow(8000e6, borrower);
+
+        skip(365 days);
+
+        uint256 borrowRateAfterBorrow = pool.borrowRate();
+        uint256 liquidityRateAfteBorrow = pool.liquidityRate();
+
+        assertGt(borrowRateAfterBorrow, borrowRateAfterSupply);
+        assertGt(liquidityRateAfteBorrow, liquidityRateAfteSupply);
+
+        uint256 supplyBefore = pool.SUPPLY_TOKEN().balanceOf(alice);
+        uint256 scaledBefore = pool.SUPPLY_TOKEN().scaledBalanceOf(alice);
+
+        vm.prank(alice);
+        pool.withdraw(1000e6, alice);
+
+        uint256 borrowRateAfterPartialWithdrawal = pool.borrowRate();
+        uint256 liquidityRateAftePartialWithdrawal = pool.liquidityRate();
+
+        assertLt(borrowRateAfterBorrow, borrowRateAfterPartialWithdrawal);
+        assertLt(liquidityRateAfteBorrow, liquidityRateAftePartialWithdrawal);
+
+        uint256 expectedScaledBurn = Math.mulDiv(1000e6, 1e18, 1.0432e18, Math.Rounding.Ceil);
+
+        assertEq(pool.SUPPLY_TOKEN().scaledBalanceOf(alice), scaledBefore - expectedScaledBurn);
+
+        uint256 supplyAfter = pool.SUPPLY_TOKEN().balanceOf(alice);
+
+        // console.log("supplyBefore ", supplyBefore);
+        // console.log("supplyAfter ", supplyAfter);
+
+        uint256 actualReduction = supplyBefore - supplyAfter;
+
+        assertGe(actualReduction, 1000e6);
+        assertLe(actualReduction - 1000e6, 1);
+
+        uint256 fullDebt = pool.DEBT_TOKEN().balanceOf(borrower);
+        usdc.mint(borrower, fullDebt - usdc.balanceOf(borrower));
+
+        vm.startPrank(borrower);
+        usdc.approve(address(pool), fullDebt);
+        pool.repay(fullDebt, borrower);
+        vm.stopPrank();
+
+        uint256 borrowRateAfterFullRepay = pool.borrowRate();
+        uint256 liquidityRateAfteFullRepay = pool.liquidityRate();
+
+        assertLt(borrowRateAfterFullRepay, borrowRateAfterPartialWithdrawal);
+        assertLt(liquidityRateAfteFullRepay, liquidityRateAftePartialWithdrawal);
+
+        uint256 fullSupplyBefore = pool.SUPPLY_TOKEN().balanceOf(alice);
+        uint256 fullScaledBefore = pool.SUPPLY_TOKEN().scaledBalanceOf(alice);
+
+        assertGt(fullScaledBefore, 0);
+
+        vm.prank(alice);
+        pool.withdraw(fullSupplyBefore, alice);
+
+        uint256 borrowRateAfterFullWithrawal = pool.borrowRate();
+        uint256 liquidityRateAfteFullWithrawal = pool.liquidityRate();
+
+        assertEq(borrowRateAfterFullWithrawal, pool.BASE_RATE());
+        assertEq(liquidityRateAfteFullWithrawal, 0);
+
+        uint256 fullExpectedScaledBurn = Math.mulDiv(fullSupplyBefore, 1e18, 1.0432e18, Math.Rounding.Ceil);
+
+        assertEq(pool.SUPPLY_TOKEN().scaledBalanceOf(alice), fullScaledBefore - fullExpectedScaledBurn);
+
+        assertEq(pool.SUPPLY_TOKEN().scaledBalanceOf(alice), 0);
+        assertEq(pool.SUPPLY_TOKEN().balanceOf(alice), 0);
+
+        assertEq(pool.totalSupply(), 0);
+        assertEq(pool.totalDebt(), 0);
+
+        assertEq(pool.totalScaledSupply(), 0);
+        assertEq(pool.totalScaledDebt(), 0);
+
+        assertEq(pool.utilization(), 0);
+
+        IndexedLendingPool.ReserveState memory state = pool.getReserveState();
+        assertGe(pool.availableLiquidity(), state.accruedToTreasury); //48000001
     }
 }
