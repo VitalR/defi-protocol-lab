@@ -65,4 +65,20 @@ library TokenTransfer {
         spent = senderBalanceBefore - senderBalanceAfter;
         received = receiverBalanceAfter - receiverBalanceBefore;
     }
+
+    function pullExactTo(IERC20 token, address from, address to, uint256 amount) internal returns (uint256 received) {
+        require(address(token) != address(0), ZeroToken());
+        require(to != address(0), ZeroRecipient());
+        require(from != to, SelfTransfer());
+
+        uint256 balanceBefore = token.balanceOf(to);
+
+        token.safeTransferFrom(from, to, amount);
+
+        received = token.balanceOf(to) - balanceBefore;
+
+        if (received != amount) {
+            revert UnexpectedAmountReceived(amount, received);
+        }
+    }
 }

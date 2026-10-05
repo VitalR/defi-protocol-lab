@@ -8,11 +8,13 @@ import { IPool } from "src/lending/interfaces/IPool.sol";
 contract PoolConfigurator is Ownable2Step {
     error ZeroAddress();
     error PoolNotConfigured();
+    error InvalidAddressProvider(address addressProvider);
 
     IPoolAddressProvider public immutable ADDRESSES_PROVIDER;
 
     constructor(address admin, address addressProvider) Ownable(admin) {
         require(addressProvider != address(0), ZeroAddress());
+        require(addressProvider.code.length > 0, InvalidAddressProvider(addressProvider));
 
         ADDRESSES_PROVIDER = IPoolAddressProvider(addressProvider);
     }

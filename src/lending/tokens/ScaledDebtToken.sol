@@ -2,7 +2,7 @@
 pragma solidity ^0.8.35;
 
 import { IERC20Metadata } from "@openzeppelin/contracts/interfaces/IERC20Metadata.sol";
-import { IBorrowIndexProvider } from "src/labs/lending/interfaces/IBorrowIndexProvider.sol";
+import { IIndexProvider } from "src/lending/interfaces/IIndexProvider.sol";
 import { DecimalMath, Math } from "src/common/math/DecimalMath.sol";
 
 contract ScaledDebtToken is IERC20Metadata {
@@ -134,7 +134,7 @@ contract ScaledDebtToken is IERC20Metadata {
     }
 
     function _currentBorrowIndex() internal view returns (uint256 index) {
-        index = IBorrowIndexProvider(POOL).currentBorrowIndex();
+        index = IIndexProvider(POOL).currentBorrowIndex(UNDERLYING);
 
         require(index >= DecimalMath.WAD, InvalidBorrowIndex(index));
     }

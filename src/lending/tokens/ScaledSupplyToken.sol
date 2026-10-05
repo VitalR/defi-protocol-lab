@@ -2,7 +2,7 @@
 pragma solidity ^0.8.35;
 
 import { IERC20Metadata } from "@openzeppelin/contracts/interfaces/IERC20Metadata.sol";
-import { ILiquidityIndexProvider } from "src/labs/lending/interfaces/ILiquidityIndexProvider.sol";
+import { IIndexProvider } from "src/lending/interfaces/IIndexProvider.sol";
 import { DecimalMath, Math } from "src/common/math/DecimalMath.sol";
 
 contract ScaledSupplyToken is IERC20Metadata {
@@ -184,7 +184,7 @@ contract ScaledSupplyToken is IERC20Metadata {
     }
 
     function _currentLiquidityIndex() internal view returns (uint256 index) {
-        index = ILiquidityIndexProvider(POOL).currentLiquidityIndex();
+        index = IIndexProvider(POOL).currentLiquidityIndex(UNDERLYING);
 
         require(index > 0, InvalidLiquidityIndex(index));
     }
