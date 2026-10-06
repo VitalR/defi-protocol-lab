@@ -13,6 +13,7 @@ import { MockWETH } from "test/mocks/MockWETH.sol";
 import { MockUSDC } from "test/mocks/MockUSDC.sol";
 import { MockERC20Decimals } from "test/mocks/MockERC20Decimals.sol";
 import { MockFeeOnTransferERC20 } from "test/mocks/MockFeeOnTransferERC20.sol";
+import { PoolHarness } from "test/helpers/PoolHarness.sol";
 
 contract PoolTest is Test {
     Pool pool;
@@ -43,7 +44,7 @@ contract PoolTest is Test {
     function setUp() public {
         provider = new PoolAddressProvider(admin);
         configurator = new PoolConfigurator(admin, address(provider));
-        pool = new Pool(address(provider));
+        pool = new PoolHarness(address(provider));
         weth = new MockWETH();
         usdc = new MockUSDC();
     }
@@ -732,6 +733,98 @@ contract PoolTest is Test {
         assertEq(pool.availableLiquidity(address(usdc)), 1000e6);
         assertEq(pool.totalScaledSupply(address(usdc)), 1000e6);
         assertEq(pool.totalSupply(address(usdc)), 1000e6);
+    }
+
+    ///// supply and withdrawal rounding above WAD /////
+
+    function _prepareUsdcAtRaisedIndex() internal returns (ScaledSupplyToken supplyToken) {
+        _setPoolAddresses();
+        _setInitReserve(address(usdc));
+
+        PoolHarness(address(pool)).setLiquidityIndexForTest(address(usdc), 1.5e18);
+
+        DataTypes.ReserveData memory reserve = pool.getReserveData(address(usdc));
+
+        supplyToken = ScaledSupplyToken(reserve.supplyToken);
+    }
+
+    // | Operation with index = `1.5e18`| Expected result                   |
+    // |---                             |---                                |
+    // | Supply `10`                    | `floor(10 / 1.5) = 6` shares      |
+    // | Supply `12`                    | `8` shares                        |
+    // | Partial withdraw `2`           | `ceil(2 / 1.5) = 2` shares burned |
+    // | Supply `1`                     | `0` shares → revert               |
+    function test_supply_roundsDownAtRaisedIndex() public {
+        ScaledSupplyToken supplyToken = _prepareUsdcAtRaisedIndex();
+
+        _supplyAliceUsdc(10);
+
+        assertEq(supplyToken.scaledBalanceOf(alice), 6);
+        assertEq(supplyToken.balanceOf(alice), 9);
+        assertEq(pool.totalScaledSupply(address(usdc)), 6);
+        assertEq(pool.totalSupply(address(usdc)), 9);
+
+        assertEq(pool.availableLiquidity(address(usdc)), 10);
+        assertEq(usdc.balanceOf(address(supplyToken)), 10);
+        assertEq(pool.unaccountedCash(address(usdc)), 0);
+    }
+
+    function test_withdraw_roundsUpAtRaisedIndex() public {
+        ScaledSupplyToken supplyToken = _prepareUsdcAtRaisedIndex();
+
+        _supplyAliceUsdc(12);
+
+        vm.prank(alice);
+        uint256 withdrawn = pool.withdraw(address(usdc), 2, alice);
+
+        assertEq(withdrawn, 2);
+        assertEq(usdc.balanceOf(alice), 2);
+
+        // There were 8 shares; ceil(2 / 1.5) = 2 burned
+        assertEq(supplyToken.scaledBalanceOf(alice), 6);
+        assertEq(supplyToken.balanceOf(alice), 9);
+        assertEq(pool.totalScaledSupply(address(usdc)), 6);
+        assertEq(pool.totalSupply(address(usdc)), 9);
+
+        assertEq(pool.availableLiquidity(address(usdc)), 10);
+        assertEq(usdc.balanceOf(address(supplyToken)), 10);
+    }
+
+    function test_withdraw_fullAtRaisedIndex() public {
+        ScaledSupplyToken supplyToken = _prepareUsdcAtRaisedIndex();
+
+        _supplyAliceUsdc(10);
+
+        vm.prank(alice);
+        uint256 withdrawn = pool.withdraw(address(usdc), type(uint256).max, alice);
+
+        assertEq(withdrawn, 9);
+        assertEq(usdc.balanceOf(alice), 9);
+        assertEq(supplyToken.scaledBalanceOf(alice), 0);
+        assertEq(supplyToken.balanceOf(alice), 0);
+        assertEq(pool.totalScaledSupply(address(usdc)), 0);
+
+        assertEq(pool.availableLiquidity(address(usdc)), 1);
+        assertEq(usdc.balanceOf(address(supplyToken)), 1);
+        assertEq(pool.unaccountedCash(address(usdc)), 0);
+    }
+
+    function test_supply_revertsWhenScaledAmountIsZero() public {
+        ScaledSupplyToken supplyToken = _prepareUsdcAtRaisedIndex();
+
+        usdc.mint(alice, 1);
+
+        vm.startPrank(alice);
+        usdc.approve(address(pool), 1);
+
+        vm.expectRevert(abi.encodeWithSelector(Pool.SupplyTooSmall.selector, 1));
+        pool.supply(address(usdc), 1, alice);
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(alice), 1);
+        assertEq(usdc.balanceOf(address(supplyToken)), 0);
+        assertEq(supplyToken.scaledBalanceOf(alice), 0);
+        assertEq(pool.availableLiquidity(address(usdc)), 0);
     }
 }
 
