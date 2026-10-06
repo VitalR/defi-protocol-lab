@@ -28,6 +28,8 @@ contract Pool is IPool, ReentrancyGuard {
     error ReserveAlreadyInitialized(address asset);
     error SupplyTooSmall(uint256 amount);
     error InvalidTimestamp(uint256 timestamp, uint256 lastUpdateTimestamp);
+    error WithdrawExceedsSupply(uint256 requested, uint256 available);
+    error InsufficientLiquidity(uint256 requested, uint256 available);
 
     event ReserveInitialized(
         address indexed asset, address indexed supplyToken, address indexed debtToken, uint8 decimals
@@ -38,6 +40,9 @@ contract Pool is IPool, ReentrancyGuard {
         address indexed onBehalfOf,
         uint256 actualAmount,
         uint256 scaledAmount
+    );
+    event Withdrawn(
+        address indexed asset, address indexed user, address indexed to, uint256 actualAmount, uint256 scaledAmount
     );
 
     uint256 public constant BASE_RATE = 0.02e18; // 2%
@@ -135,6 +140,43 @@ contract Pool is IPool, ReentrancyGuard {
         _updateRates(asset);
 
         emit Supplied(asset, msg.sender, onBehalfOf, amount, scaledAmount);
+    }
+
+    function withdraw(address asset, uint256 amount, address to) external nonReentrant returns (uint256 withdrawn) {
+        require(asset != address(0) && to != address(0), ZeroAddress());
+        require(amount > 0, ZeroAmount());
+
+        _accrueReserve(asset);
+
+        DataTypes.ReserveData storage reserve = _getInitializedReserve(asset);
+        ScaledSupplyToken supplyToken = ScaledSupplyToken(reserve.supplyToken);
+
+        uint256 userScaledSupply = supplyToken.scaledBalanceOf(msg.sender);
+        uint256 userSupply =
+            Math.mulDiv(userScaledSupply, reserve.state.liquidityIndex, DecimalMath.WAD, Math.Rounding.Floor);
+
+        withdrawn = amount == type(uint256).max ? userSupply : amount;
+
+        require(withdrawn > 0, ZeroAmount());
+        require(withdrawn <= userSupply, WithdrawExceedsSupply(withdrawn, userSupply));
+        require(
+            withdrawn <= reserve.state.availableLiquidity,
+            InsufficientLiquidity(withdrawn, reserve.state.availableLiquidity)
+        );
+
+        uint256 scaledAmount = withdrawn == userSupply
+            ? userScaledSupply
+            : Math.mulDiv(withdrawn, DecimalMath.WAD, reserve.state.liquidityIndex, Math.Rounding.Ceil);
+
+        reserve.state.availableLiquidity -= withdrawn;
+
+        supplyToken.burnScaled(msg.sender, scaledAmount);
+
+        supplyToken.transferUnderlyingTo(to, withdrawn);
+
+        _updateRates(asset);
+
+        emit Withdrawn(asset, msg.sender, to, withdrawn, scaledAmount);
     }
 
     function getReserveData(address asset) external view returns (DataTypes.ReserveData memory) {

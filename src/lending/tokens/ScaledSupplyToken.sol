@@ -4,8 +4,11 @@ pragma solidity ^0.8.35;
 import { IERC20Metadata } from "@openzeppelin/contracts/interfaces/IERC20Metadata.sol";
 import { IIndexProvider } from "src/lending/interfaces/IIndexProvider.sol";
 import { DecimalMath, Math } from "src/common/math/DecimalMath.sol";
+import { TokenTransfer } from "src/common/token/TokenTransfer.sol";
 
 contract ScaledSupplyToken is IERC20Metadata {
+    using TokenTransfer for IERC20Metadata;
+
     error ZeroAddress();
     error ZeroScaledAmount();
     error OnlyPool(address caller);
@@ -21,7 +24,7 @@ contract ScaledSupplyToken is IERC20Metadata {
     event BalanceTransfer(address indexed from, address indexed to, uint256 scaledAmount, uint256 index);
 
     address public immutable POOL;
-    address public immutable UNDERLYING;
+    address public immutable UNDERLYING_ASSET;
 
     uint256 internal _scaledTotalSupply;
 
@@ -42,7 +45,7 @@ contract ScaledSupplyToken is IERC20Metadata {
         require(pool != address(0) && underlying != address(0), ZeroAddress());
 
         POOL = pool;
-        UNDERLYING = underlying;
+        UNDERLYING_ASSET = underlying;
 
         _name = name_;
         _symbol = symbol_;
@@ -96,6 +99,10 @@ contract ScaledSupplyToken is IERC20Metadata {
         emit Transfer(user, address(0), actualBurned);
 
         emit BurnScaled(user, actualBurned, scaledAmount, index);
+    }
+
+    function transferUnderlyingTo(address to, uint256 amount) external onlyPool {
+        IERC20Metadata(address(UNDERLYING_ASSET)).pushExact(to, amount);
     }
 
     function transfer(address to, uint256 amount) external override returns (bool) {
@@ -184,7 +191,7 @@ contract ScaledSupplyToken is IERC20Metadata {
     }
 
     function _currentLiquidityIndex() internal view returns (uint256 index) {
-        index = IIndexProvider(POOL).currentLiquidityIndex(UNDERLYING);
+        index = IIndexProvider(POOL).currentLiquidityIndex(UNDERLYING_ASSET);
 
         require(index > 0, InvalidLiquidityIndex(index));
     }

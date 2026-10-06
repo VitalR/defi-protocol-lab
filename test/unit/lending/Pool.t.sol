@@ -36,6 +36,9 @@ contract PoolTest is Test {
         uint256 actualAmount,
         uint256 scaledAmount
     );
+    event Withdrawn(
+        address indexed asset, address indexed user, address indexed to, uint256 actualAmount, uint256 scaledAmount
+    );
 
     function setUp() public {
         provider = new PoolAddressProvider(admin);
@@ -484,6 +487,251 @@ contract PoolTest is Test {
         assertEq(pool.totalSupply(address(usdc)), 1000e6);
         assertEq(pool.utilization(address(usdc)), utilizationBefore);
         assertEq(pool.borrowRate(address(usdc)), borrowRateBefore);
+    }
+
+    ///// Withdraw /////
+
+    function test_withdraw_partial() public {
+        _setPoolAddresses();
+        _setInitReserve(address(usdc));
+
+        usdc.mint(alice, 1000e6);
+        assertEq(usdc.balanceOf(alice), 1000e6);
+
+        vm.startPrank(alice);
+        usdc.approve(address(pool), 1000e6);
+
+        pool.supply(address(usdc), 1000e6, alice);
+
+        DataTypes.ReserveData memory reserve = pool.getReserveData(address(usdc));
+
+        assertEq(usdc.balanceOf(alice), 0e6);
+        assertEq(usdc.balanceOf(address(pool)), 0e6);
+        assertEq(usdc.balanceOf(reserve.supplyToken), 1000e6);
+
+        assertEq(pool.availableLiquidity(address(usdc)), 1000e6);
+        assertEq(pool.totalScaledSupply(address(usdc)), 1000e6);
+        assertEq(pool.totalSupply(address(usdc)), 1000e6);
+
+        vm.expectEmit(true, true, true, true, address(pool));
+        emit Withdrawn(address(usdc), alice, alice, 500e6, 500e6);
+        pool.withdraw(address(usdc), 500e6, alice);
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(alice), 500e6);
+        assertEq(usdc.balanceOf(address(pool)), 0e6);
+        assertEq(usdc.balanceOf(reserve.supplyToken), 500e6);
+
+        assertEq(pool.availableLiquidity(address(usdc)), 500e6);
+        assertEq(pool.totalScaledSupply(address(usdc)), 500e6);
+        assertEq(pool.totalSupply(address(usdc)), 500e6);
+    }
+
+    function test_withdraw_fullMax() public {
+        _setPoolAddresses();
+        _setInitReserve(address(usdc));
+
+        usdc.mint(alice, 1000e6);
+        assertEq(usdc.balanceOf(alice), 1000e6);
+
+        vm.startPrank(alice);
+        usdc.approve(address(pool), 1000e6);
+
+        pool.supply(address(usdc), 1000e6, alice);
+
+        DataTypes.ReserveData memory reserve = pool.getReserveData(address(usdc));
+
+        assertEq(usdc.balanceOf(alice), 0e6);
+        assertEq(usdc.balanceOf(address(pool)), 0e6);
+        assertEq(usdc.balanceOf(reserve.supplyToken), 1000e6);
+
+        assertEq(ScaledSupplyToken(reserve.supplyToken).balanceOf(alice), 1000e6);
+
+        assertEq(pool.availableLiquidity(address(usdc)), 1000e6);
+        assertEq(pool.totalScaledSupply(address(usdc)), 1000e6);
+        assertEq(pool.totalSupply(address(usdc)), 1000e6);
+
+        uint256 withdrawn = type(uint256).max;
+
+        vm.expectEmit(true, true, true, true, address(pool));
+        emit Withdrawn(address(usdc), alice, alice, 1000e6, 1000e6);
+        uint256 actualWithdrawn = pool.withdraw(address(usdc), type(uint256).max, alice);
+        vm.stopPrank();
+
+        assertEq(actualWithdrawn, 1000e6);
+        assertEq(ScaledSupplyToken(reserve.supplyToken).balanceOf(alice), 0e6);
+
+        assertEq(usdc.balanceOf(alice), 1000e6);
+        assertEq(usdc.balanceOf(address(pool)), 0e6);
+        assertEq(usdc.balanceOf(reserve.supplyToken), 0e6);
+
+        assertEq(pool.availableLiquidity(address(usdc)), 0e6);
+        assertEq(pool.totalScaledSupply(address(usdc)), 0e6);
+        assertEq(pool.totalSupply(address(usdc)), 0e6);
+    }
+
+    function test_withdraw_full() public {
+        _setPoolAddresses();
+        _setInitReserve(address(usdc));
+
+        usdc.mint(alice, 1000e6);
+        assertEq(usdc.balanceOf(alice), 1000e6);
+
+        vm.startPrank(alice);
+        usdc.approve(address(pool), 1000e6);
+
+        pool.supply(address(usdc), 1000e6, alice);
+
+        DataTypes.ReserveData memory reserve = pool.getReserveData(address(usdc));
+
+        assertEq(usdc.balanceOf(alice), 0e6);
+        assertEq(usdc.balanceOf(address(pool)), 0e6);
+        assertEq(usdc.balanceOf(reserve.supplyToken), 1000e6);
+
+        assertEq(ScaledSupplyToken(reserve.supplyToken).balanceOf(alice), 1000e6);
+
+        assertEq(pool.availableLiquidity(address(usdc)), 1000e6);
+        assertEq(pool.totalScaledSupply(address(usdc)), 1000e6);
+        assertEq(pool.totalSupply(address(usdc)), 1000e6);
+
+        vm.expectEmit(true, true, true, true, address(pool));
+        emit Withdrawn(address(usdc), alice, alice, 1000e6, 1000e6);
+        uint256 actualWithdrawn = pool.withdraw(address(usdc), 1000e6, alice);
+        vm.stopPrank();
+
+        assertEq(actualWithdrawn, 1000e6);
+        assertEq(ScaledSupplyToken(reserve.supplyToken).balanceOf(alice), 0e6);
+
+        assertEq(usdc.balanceOf(alice), 1000e6);
+        assertEq(usdc.balanceOf(address(pool)), 0e6);
+        assertEq(usdc.balanceOf(reserve.supplyToken), 0e6);
+
+        assertEq(pool.availableLiquidity(address(usdc)), 0e6);
+        assertEq(pool.totalScaledSupply(address(usdc)), 0e6);
+        assertEq(pool.totalSupply(address(usdc)), 0e6);
+    }
+
+    function test_withdraw_partialTo() public {
+        _setPoolAddresses();
+        _setInitReserve(address(usdc));
+
+        usdc.mint(alice, 1000e6);
+        assertEq(usdc.balanceOf(alice), 1000e6);
+
+        vm.startPrank(alice);
+        usdc.approve(address(pool), 1000e6);
+
+        pool.supply(address(usdc), 1000e6, bob);
+        vm.stopPrank();
+
+        DataTypes.ReserveData memory reserve = pool.getReserveData(address(usdc));
+
+        assertEq(usdc.balanceOf(alice), 0e6);
+        assertEq(usdc.balanceOf(address(pool)), 0e6);
+        assertEq(usdc.balanceOf(reserve.supplyToken), 1000e6);
+        assertEq(ScaledSupplyToken(reserve.supplyToken).balanceOf(bob), 1000e6);
+
+        assertEq(pool.availableLiquidity(address(usdc)), 1000e6);
+        assertEq(pool.totalScaledSupply(address(usdc)), 1000e6);
+        assertEq(pool.totalSupply(address(usdc)), 1000e6);
+
+        vm.startPrank(bob);
+        vm.expectEmit(true, true, true, true, address(pool));
+        emit Withdrawn(address(usdc), bob, alice, 500e6, 500e6);
+        pool.withdraw(address(usdc), 500e6, alice);
+        vm.stopPrank();
+
+        reserve = pool.getReserveData(address(usdc));
+
+        assertEq(usdc.balanceOf(alice), 500e6);
+        assertEq(usdc.balanceOf(address(pool)), 0e6);
+        assertEq(usdc.balanceOf(reserve.supplyToken), 500e6);
+
+        assertEq(ScaledSupplyToken(reserve.supplyToken).balanceOf(bob), 500e6);
+
+        assertEq(pool.availableLiquidity(address(usdc)), 500e6);
+        assertEq(pool.totalScaledSupply(address(usdc)), 500e6);
+        assertEq(pool.totalSupply(address(usdc)), 500e6);
+    }
+
+    function test_withdraw_reverts() public {
+        _setPoolAddresses();
+        _setInitReserve(address(usdc));
+
+        usdc.mint(alice, 1000e6);
+        assertEq(usdc.balanceOf(alice), 1000e6);
+
+        vm.startPrank(alice);
+        usdc.approve(address(pool), 1000e6);
+
+        pool.supply(address(usdc), 1000e6, alice);
+
+        DataTypes.ReserveData memory reserve = pool.getReserveData(address(usdc));
+
+        assertEq(usdc.balanceOf(alice), 0e6);
+        assertEq(usdc.balanceOf(address(pool)), 0e6);
+        assertEq(usdc.balanceOf(reserve.supplyToken), 1000e6);
+
+        assertEq(pool.availableLiquidity(address(usdc)), 1000e6);
+        assertEq(pool.totalScaledSupply(address(usdc)), 1000e6);
+        assertEq(pool.totalSupply(address(usdc)), 1000e6);
+
+        vm.expectRevert(Pool.ZeroAddress.selector);
+        pool.withdraw(address(0), 500e6, alice);
+
+        vm.expectRevert(Pool.ZeroAddress.selector);
+        pool.withdraw(address(usdc), 500e6, address(0));
+
+        vm.expectRevert(Pool.ZeroAmount.selector);
+        pool.withdraw(address(usdc), 0e6, alice);
+
+        vm.expectRevert(abi.encodeWithSelector(Pool.WithdrawExceedsSupply.selector, 1001e6, 1000e6));
+        pool.withdraw(address(usdc), 1001e6, alice);
+
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(alice), 0e6);
+        assertEq(usdc.balanceOf(address(pool)), 0e6);
+        assertEq(usdc.balanceOf(reserve.supplyToken), 1000e6);
+
+        assertEq(pool.availableLiquidity(address(usdc)), 1000e6);
+        assertEq(pool.totalScaledSupply(address(usdc)), 1000e6);
+        assertEq(pool.totalSupply(address(usdc)), 1000e6);
+    }
+
+    function test_transferUnderlyingTo_revertsWhenNotPool() public {
+        _setPoolAddresses();
+        _setInitReserve(address(usdc));
+
+        usdc.mint(alice, 1000e6);
+        assertEq(usdc.balanceOf(alice), 1000e6);
+
+        vm.startPrank(alice);
+        usdc.approve(address(pool), 1000e6);
+
+        pool.supply(address(usdc), 1000e6, alice);
+
+        DataTypes.ReserveData memory reserve = pool.getReserveData(address(usdc));
+
+        assertEq(usdc.balanceOf(alice), 0e6);
+        assertEq(usdc.balanceOf(address(pool)), 0e6);
+        assertEq(usdc.balanceOf(reserve.supplyToken), 1000e6);
+
+        assertEq(pool.availableLiquidity(address(usdc)), 1000e6);
+        assertEq(pool.totalScaledSupply(address(usdc)), 1000e6);
+        assertEq(pool.totalSupply(address(usdc)), 1000e6);
+
+        vm.expectRevert(abi.encodeWithSelector(ScaledSupplyToken.OnlyPool.selector, alice));
+        ScaledSupplyToken(reserve.supplyToken).transferUnderlyingTo(alice, 1000e6);
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(alice), 0e6);
+        assertEq(usdc.balanceOf(address(pool)), 0e6);
+        assertEq(usdc.balanceOf(reserve.supplyToken), 1000e6);
+
+        assertEq(pool.availableLiquidity(address(usdc)), 1000e6);
+        assertEq(pool.totalScaledSupply(address(usdc)), 1000e6);
+        assertEq(pool.totalSupply(address(usdc)), 1000e6);
     }
 }
 

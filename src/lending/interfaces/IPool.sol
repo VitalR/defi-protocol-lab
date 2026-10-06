@@ -16,4 +16,8 @@ interface IPool {
     function currentBorrowIndex(address asset) external view returns (uint256);
 
     function currentLiquidityIndex(address asset) external view returns (uint256);
+
+    function supply(address asset, uint256 amount, address onBehalfOf) external;
+
+    function withdraw(address asset, uint256 amount, address to) external returns (uint256 withdrawn);
 }
