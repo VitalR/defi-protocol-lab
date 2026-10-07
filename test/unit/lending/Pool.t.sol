@@ -30,6 +30,9 @@ contract PoolTest is Test {
     event ReserveInitialized(
         address indexed asset, address indexed supplyToken, address indexed debtToken, uint8 decimals
     );
+    event ReserveConfigured(
+        address indexed asset, uint256 ltvWad, uint256 liquidationThresholdWad, bool borrowingEnabled
+    );
     event Supplied(
         address indexed asset,
         address indexed caller,
@@ -825,6 +828,164 @@ contract PoolTest is Test {
         assertEq(usdc.balanceOf(address(supplyToken)), 0);
         assertEq(supplyToken.scaledBalanceOf(alice), 0);
         assertEq(pool.availableLiquidity(address(usdc)), 0);
+    }
+
+    ///// Reserve Configuration /////
+
+    function test_configureReserve_borrowingDisabled() public {
+        _setPoolAddresses();
+        _setInitReserveWeth();
+        DataTypes.ReserveData memory reserve = pool.getReserveData(address(weth));
+        assertTrue(reserve.initialized);
+
+        vm.prank(admin);
+        vm.expectEmit(true, false, false, true, address(pool));
+        emit ReserveConfigured(address(weth), 0.75e18, 0.8e18, false);
+        configurator.configureReserve(address(weth), 0.75e18, 0.8e18, false);
+
+        reserve = pool.getReserveData(address(weth));
+        assertEq(reserve.configuration.ltvWad, 0.75e18);
+        assertEq(reserve.configuration.liquidationThresholdWad, 0.8e18);
+        assertFalse(reserve.configuration.borrowingEnabled);
+    }
+
+    function test_configureReserve_update() public {
+        _setPoolAddresses();
+        _setInitReserveWeth();
+
+        vm.prank(admin);
+        vm.expectEmit(true, false, false, true, address(pool));
+        emit ReserveConfigured(address(weth), 0.75e18, 0.8e18, false);
+        configurator.configureReserve(address(weth), 0.75e18, 0.8e18, false);
+
+        DataTypes.ReserveData memory reserve = pool.getReserveData(address(weth));
+        assertEq(reserve.configuration.ltvWad, 0.75e18);
+        assertEq(reserve.configuration.liquidationThresholdWad, 0.8e18);
+        assertFalse(reserve.configuration.borrowingEnabled);
+
+        vm.prank(admin);
+        vm.expectEmit(true, false, false, true, address(pool));
+        emit ReserveConfigured(address(weth), 0.77e18, 0.85e18, true);
+        configurator.configureReserve(address(weth), 0.77e18, 0.85e18, true);
+
+        reserve = pool.getReserveData(address(weth));
+        assertEq(reserve.configuration.ltvWad, 0.77e18);
+        assertEq(reserve.configuration.liquidationThresholdWad, 0.85e18);
+        assertTrue(reserve.configuration.borrowingEnabled);
+    }
+
+    function _setInitReserveUsdc() internal {
+        vm.prank(admin);
+        configurator.initReserve(address(usdc));
+
+        DataTypes.ReserveData memory reserve = pool.getReserveData(address(usdc));
+        assertTrue(reserve.initialized);
+    }
+
+    function _setPoolAndInitReserveWeth() internal {
+        _setPoolAddresses();
+        _setInitReserveWeth();
+    }
+
+    function _setInitAndConfigReserveWeth() internal {
+        _setPoolAddresses();
+        _setInitReserveWeth();
+        vm.prank(admin);
+        configurator.configureReserve(address(weth), 0.75e18, 0.8e18, false);
+    }
+
+    function test_configureReserve_borrowingEnabled_additionalAsset() public {
+        _setInitAndConfigReserveWeth();
+
+        _setInitReserveUsdc();
+        DataTypes.ReserveData memory reserve = pool.getReserveData(address(usdc));
+        assertTrue(reserve.initialized);
+
+        vm.prank(admin);
+        vm.expectEmit(true, false, false, true, address(pool));
+        emit ReserveConfigured(address(usdc), 0, 0, true);
+        configurator.configureReserve(address(usdc), 0, 0, true);
+
+        reserve = pool.getReserveData(address(weth));
+        assertEq(reserve.configuration.ltvWad, 0.75e18);
+        assertEq(reserve.configuration.liquidationThresholdWad, 0.8e18);
+        assertFalse(reserve.configuration.borrowingEnabled);
+
+        reserve = pool.getReserveData(address(usdc));
+        assertEq(reserve.configuration.ltvWad, 0);
+        assertEq(reserve.configuration.liquidationThresholdWad, 0);
+        assertTrue(reserve.configuration.borrowingEnabled);
+    }
+
+    function test_configureReserve_borrowingEnabled() public {
+        _setPoolAddresses();
+        _setInitReserveUsdc();
+        DataTypes.ReserveData memory reserve = pool.getReserveData(address(usdc));
+        assertTrue(reserve.initialized);
+
+        vm.prank(admin);
+        vm.expectEmit(true, false, false, true, address(pool));
+        emit ReserveConfigured(address(usdc), 0, 0.8e18, true);
+        configurator.configureReserve(address(usdc), 0, 0.8e18, true);
+
+        reserve = pool.getReserveData(address(usdc));
+        assertEq(reserve.configuration.ltvWad, 0);
+        assertEq(reserve.configuration.liquidationThresholdWad, 0.8e18);
+        assertTrue(reserve.configuration.borrowingEnabled);
+    }
+
+    function test_configureReserve_reverts() public {
+        _setPoolAddresses();
+        _setInitReserveWeth();
+
+        vm.expectRevert(); //OwnableUnauthorizedAccount
+        configurator.configureReserve(address(weth), 0.75e18, 0.8e18, false);
+
+        vm.prank(admin);
+        vm.expectRevert(PoolConfigurator.ZeroAddress.selector);
+        configurator.configureReserve(address(0), 0.75e18, 0.8e18, false);
+
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(Pool.InvalidUnderlying.selector, alice));
+        configurator.configureReserve(address(alice), 0.75e18, 0.8e18, false);
+
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(Pool.OnlyConfigurator.selector, admin));
+        pool.configureReserve(address(weth), 0.75e18, 0.8e18, false);
+
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(Pool.UnsupportedAsset.selector, address(usdc)));
+        configurator.configureReserve(address(usdc), 0.75e18, 0.8e18, false);
+
+        DataTypes.ReserveData memory reserve = pool.getReserveData(address(weth));
+        assertEq(reserve.configuration.ltvWad, 0);
+        assertEq(reserve.configuration.liquidationThresholdWad, 0);
+        assertFalse(reserve.configuration.borrowingEnabled);
+    }
+
+    function test_configureReserve_revertsWhenInvalidParams() public {
+        _setInitAndConfigReserveWeth();
+        DataTypes.ReserveData memory reserve = pool.getReserveData(address(weth));
+        assertEq(reserve.configuration.ltvWad, 0.75e18);
+        assertEq(reserve.configuration.liquidationThresholdWad, 0.8e18);
+        assertFalse(reserve.configuration.borrowingEnabled);
+
+        vm.prank(admin);
+        vm.expectRevert(Pool.InvalidParams.selector);
+        configurator.configureReserve(address(weth), 0.81e18, 0.8e18, false);
+
+        vm.prank(admin);
+        vm.expectRevert(Pool.InvalidParams.selector);
+        configurator.configureReserve(address(weth), 0.79e18, DecimalMath.WAD + 1, false);
+
+        vm.prank(admin);
+        vm.expectRevert(Pool.InvalidParams.selector);
+        configurator.configureReserve(address(weth), 0.79e18, 0, false);
+
+        reserve = pool.getReserveData(address(weth));
+        assertEq(reserve.configuration.ltvWad, 0.75e18);
+        assertEq(reserve.configuration.liquidationThresholdWad, 0.8e18);
+        assertFalse(reserve.configuration.borrowingEnabled);
     }
 }
 

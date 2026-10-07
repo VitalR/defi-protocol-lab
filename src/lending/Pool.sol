@@ -26,13 +26,18 @@ contract Pool is IPool, ReentrancyGuard {
     error UnsupportedAsset(address asset);
     error UnsupportedAssetDecimals(uint8 assetDecimals);
     error ReserveAlreadyInitialized(address asset);
+    error ReserveNotInitialized(address asset);
     error SupplyTooSmall(uint256 amount);
     error InvalidTimestamp(uint256 timestamp, uint256 lastUpdateTimestamp);
     error WithdrawExceedsSupply(uint256 requested, uint256 available);
     error InsufficientLiquidity(uint256 requested, uint256 available);
+    error InvalidParams();
 
     event ReserveInitialized(
         address indexed asset, address indexed supplyToken, address indexed debtToken, uint8 decimals
+    );
+    event ReserveConfigured(
+        address indexed asset, uint256 ltvWad, uint256 liquidationThresholdWad, bool borrowingEnabled
     );
     event Supplied(
         address indexed asset,
@@ -57,6 +62,11 @@ contract Pool is IPool, ReentrancyGuard {
     mapping(address asset => DataTypes.ReserveData reserve) internal _reserves;
     address[] internal _reservesList;
 
+    modifier onlyConfigurator() {
+        require(msg.sender == ADDRESSES_PROVIDER.getPoolConfigurator(), OnlyConfigurator(msg.sender));
+        _;
+    }
+
     constructor(address addressProvider) {
         require(addressProvider != address(0), ZeroAddress());
 
@@ -65,9 +75,7 @@ contract Pool is IPool, ReentrancyGuard {
         ADDRESSES_PROVIDER = IPoolAddressProvider(addressProvider);
     }
 
-    function initReserve(address asset) external {
-        require(msg.sender == ADDRESSES_PROVIDER.getPoolConfigurator(), OnlyConfigurator(msg.sender));
-
+    function initReserve(address asset) external onlyConfigurator {
         require(asset != address(0), ZeroAddress());
 
         require(asset.code.length > 0, InvalidUnderlying(asset));
@@ -117,6 +125,27 @@ contract Pool is IPool, ReentrancyGuard {
         _reservesList.push(asset);
 
         emit ReserveInitialized(asset, address(supplyToken), address(debtToken), assetDecimals);
+    }
+
+    function configureReserve(address asset, uint256 ltvWad, uint256 liquidationThresholdWad, bool borrowingEnabled)
+        external
+        onlyConfigurator
+    {
+        require(asset != address(0), ZeroAddress());
+
+        require(asset.code.length > 0, InvalidUnderlying(asset));
+
+        DataTypes.ReserveData storage reserve = _getInitializedReserve(asset);
+
+        require(ltvWad <= liquidationThresholdWad && liquidationThresholdWad <= DecimalMath.WAD, InvalidParams());
+
+        DataTypes.ReserveConfiguration storage config = reserve.configuration;
+
+        config.ltvWad = ltvWad;
+        config.liquidationThresholdWad = liquidationThresholdWad;
+        config.borrowingEnabled = borrowingEnabled;
+
+        emit ReserveConfigured(asset, config.ltvWad, config.liquidationThresholdWad, config.borrowingEnabled);
     }
 
     function supply(address asset, uint256 amount, address onBehalfOf) external nonReentrant {

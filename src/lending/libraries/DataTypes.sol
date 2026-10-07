@@ -1,9 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.35;
 
-import { DecimalMath, Math } from "src/common/math/DecimalMath.sol";
-
 library DataTypes {
+    struct ReserveData {
+        ReserveState state;
+        ReserveConfiguration configuration;
+        address supplyToken;
+        address debtToken;
+        uint8 decimals;
+        bool initialized;
+    }
+
     struct ReserveState {
         uint256 borrowIndex;
         uint256 liquidityIndex;
@@ -15,11 +22,9 @@ library DataTypes {
         uint256 lastUpdateTimestamp;
     }
 
-    struct ReserveData {
-        ReserveState state;
-        address supplyToken;
-        address debtToken;
-        uint8 decimals;
-        bool initialized;
+    struct ReserveConfiguration {
+        uint256 ltvWad;
+        uint256 liquidationThresholdWad;
+        bool borrowingEnabled;
     }
 }
