@@ -14,6 +14,10 @@ interface IPool {
 
     function withdraw(address asset, uint256 amount, address to) external returns (uint256 withdrawn);
 
+    function setUserUseReserveAsCollateral(address asset, bool enabled) external;
+
+    function isUsingAsCollateral(address user, address asset) external view returns (bool);
+
     function ADDRESSES_PROVIDER() external view returns (IPoolAddressProvider);
 
     function getReserveData(address asset) external view returns (DataTypes.ReserveData memory);

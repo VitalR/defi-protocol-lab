@@ -32,6 +32,8 @@ contract Pool is IPool, ReentrancyGuard {
     error WithdrawExceedsSupply(uint256 requested, uint256 available);
     error InsufficientLiquidity(uint256 requested, uint256 available);
     error InvalidParams();
+    error CollateralNotEnabled(address asset);
+    error NoSupplyPosition(address user, address asset);
 
     event ReserveInitialized(
         address indexed asset, address indexed supplyToken, address indexed debtToken, uint8 decimals
@@ -49,6 +51,7 @@ contract Pool is IPool, ReentrancyGuard {
     event Withdrawn(
         address indexed asset, address indexed user, address indexed to, uint256 actualAmount, uint256 scaledAmount
     );
+    event UserCollateralUsageChanged(address indexed user, address indexed asset, bool enabled);
 
     uint256 public constant BASE_RATE = 0.02e18; // 2%
     uint256 public constant SLOPE1 = 0.04e18; // 4%;  slope1 - pre-kink slope
@@ -61,6 +64,8 @@ contract Pool is IPool, ReentrancyGuard {
 
     mapping(address asset => DataTypes.ReserveData reserve) internal _reserves;
     address[] internal _reservesList;
+
+    mapping(address user => mapping(address asset => bool enabled)) internal _usingAsCollateral;
 
     modifier onlyConfigurator() {
         require(msg.sender == ADDRESSES_PROVIDER.getPoolConfigurator(), OnlyConfigurator(msg.sender));
@@ -197,6 +202,10 @@ contract Pool is IPool, ReentrancyGuard {
             ? userScaledSupply
             : Math.mulDiv(withdrawn, DecimalMath.WAD, reserve.state.liquidityIndex, Math.Rounding.Ceil);
 
+        if (scaledAmount == userScaledSupply) {
+            _setUserUseReserveAsCollateral(msg.sender, asset, false);
+        }
+
         reserve.state.availableLiquidity -= withdrawn;
 
         supplyToken.burnScaled(msg.sender, scaledAmount);
@@ -206,6 +215,31 @@ contract Pool is IPool, ReentrancyGuard {
         _updateRates(asset);
 
         emit Withdrawn(asset, msg.sender, to, withdrawn, scaledAmount);
+    }
+
+    function setUserUseReserveAsCollateral(address asset, bool enabled) external {
+        _setUserUseReserveAsCollateral(msg.sender, asset, enabled);
+    }
+
+    function _setUserUseReserveAsCollateral(address user, address asset, bool enabled) internal {
+        DataTypes.ReserveData storage reserve = _getInitializedReserve(asset);
+        ScaledSupplyToken supplyToken = ScaledSupplyToken(reserve.supplyToken);
+
+        if (_usingAsCollateral[user][asset] == enabled) return;
+
+        if (enabled) {
+            require(reserve.configuration.liquidationThresholdWad > 0, CollateralNotEnabled(asset));
+
+            require(ScaledSupplyToken(reserve.supplyToken).balanceOf(user) > 0, NoSupplyPosition(user, asset));
+        }
+
+        _usingAsCollateral[user][asset] = enabled;
+
+        emit UserCollateralUsageChanged(user, asset, enabled);
+    }
+
+    function isUsingAsCollateral(address user, address asset) external view returns (bool) {
+        return _usingAsCollateral[user][asset];
     }
 
     function getReserveData(address asset) external view returns (DataTypes.ReserveData memory) {
