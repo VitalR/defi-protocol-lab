@@ -27,4 +27,13 @@ library DataTypes {
         uint256 liquidationThresholdWad;
         bool borrowingEnabled;
     }
+
+    struct AccountData {
+        uint256 collateralValueWad;
+        uint256 debtValueWad;
+        uint256 borrowCapacityWad;
+        uint256 liquidationCapacityWad;
+        uint256 availableBorrowsWad;
+        uint256 healthFactorWad;
+    }
 }

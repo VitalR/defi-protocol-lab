@@ -20,6 +20,8 @@ interface IPool {
 
     function ADDRESSES_PROVIDER() external view returns (IPoolAddressProvider);
 
+    function getUserAccountData(address user) external view returns (DataTypes.AccountData memory);
+
     function getReserveData(address asset) external view returns (DataTypes.ReserveData memory);
 
     function getReservesList() external view returns (address[] memory);

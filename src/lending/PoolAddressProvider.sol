@@ -10,14 +10,17 @@ contract PoolAddressProvider is IPoolAddressProvider, Ownable2Step {
     error ZeroAddress();
     error InvalidPool(address pool);
     error InvalidConfigurator(address poolConfigurator);
+    error InvalidOracle(address oracle);
     error PoolAlreadyRegistered(address pool);
     error AddressProviderMismatch(address addressProvider, address candidateProvider);
 
     event PoolSet(address oldPool, address newPool);
     event PoolConfiguratorSet(address oldConfigurator, address newConfigurator);
+    event OracleSet(address oldOracle, address newOracle);
 
     address internal _pool;
     address internal _configurator;
+    address internal _oracle;
 
     constructor(address admin) Ownable(admin) { }
 
@@ -30,7 +33,6 @@ contract PoolAddressProvider is IPoolAddressProvider, Ownable2Step {
         require(candidateProvider == address(this), AddressProviderMismatch(address(this), candidateProvider));
 
         address oldPool = _pool;
-
         _pool = newPool;
 
         emit PoolSet(oldPool, newPool);
@@ -44,10 +46,19 @@ contract PoolAddressProvider is IPoolAddressProvider, Ownable2Step {
         require(candidateProvider == address(this), AddressProviderMismatch(address(this), candidateProvider));
 
         address oldConfigurator = _configurator;
-
         _configurator = newConfigurator;
 
         emit PoolConfiguratorSet(oldConfigurator, newConfigurator);
+    }
+
+    function setPriceOracle(address newOracle) external onlyOwner {
+        require(newOracle != address(0), ZeroAddress());
+        require(newOracle.code.length > 0, InvalidOracle(newOracle));
+
+        address oldOracle = _oracle;
+        _oracle = newOracle;
+
+        emit OracleSet(oldOracle, newOracle);
     }
 
     function getPool() external view returns (address) {
@@ -56,5 +67,9 @@ contract PoolAddressProvider is IPoolAddressProvider, Ownable2Step {
 
     function getPoolConfigurator() external view returns (address) {
         return _configurator;
+    }
+
+    function getPriceOracle() external view returns (address) {
+        return _oracle;
     }
 }

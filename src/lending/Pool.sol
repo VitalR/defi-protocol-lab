@@ -7,6 +7,8 @@ import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.s
 import { IPool } from "src/lending/interfaces/IPool.sol";
 import { IPoolAddressProvider } from "src/lending/interfaces/IPoolAddressProvider.sol";
 import { IIndexProvider } from "src/lending/interfaces/IIndexProvider.sol";
+import { IAssetOracle } from "src/lending/interfaces/IAssetOracle.sol";
+import { AccountDataLogic } from "src/lending/libraries/AccountDataLogic.sol";
 import { DataTypes } from "src/lending/libraries/DataTypes.sol";
 import { DecimalMath, Math } from "src/common/math/DecimalMath.sol";
 import { TokenTransfer } from "src/common/token/TokenTransfer.sol";
@@ -34,6 +36,7 @@ contract Pool is IPool, ReentrancyGuard {
     error InvalidParams();
     error CollateralNotEnabled(address asset);
     error NoSupplyPosition(address user, address asset);
+    error PriceOracleNotConfigured();
 
     event ReserveInitialized(
         address indexed asset, address indexed supplyToken, address indexed debtToken, uint8 decimals
@@ -223,7 +226,6 @@ contract Pool is IPool, ReentrancyGuard {
 
     function _setUserUseReserveAsCollateral(address user, address asset, bool enabled) internal {
         DataTypes.ReserveData storage reserve = _getInitializedReserve(asset);
-        ScaledSupplyToken supplyToken = ScaledSupplyToken(reserve.supplyToken);
 
         if (_usingAsCollateral[user][asset] == enabled) return;
 
@@ -240,6 +242,15 @@ contract Pool is IPool, ReentrancyGuard {
 
     function isUsingAsCollateral(address user, address asset) external view returns (bool) {
         return _usingAsCollateral[user][asset];
+    }
+
+    function getUserAccountData(address user) external view returns (DataTypes.AccountData memory) {
+        address oracle = ADDRESSES_PROVIDER.getPriceOracle();
+        require(oracle != address(0), PriceOracleNotConfigured());
+
+        return AccountDataLogic.calculateUserAccountData(
+            _reserves, _reservesList, _usingAsCollateral, user, IAssetOracle(oracle)
+        );
     }
 
     function getReserveData(address asset) external view returns (DataTypes.ReserveData memory) {
