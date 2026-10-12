@@ -298,4 +298,100 @@ contract PoolAccountDataTest is Test {
         assertEq(data.availableBorrowsWad, 500e18);
         assertEq(data.healthFactorWad, 1.6e18);
     }
+
+    function test_getUserAccountData_clampsAvailableBorrowsToZero() public {
+        _registerMarketContracts();
+        _setupWethReserve();
+
+        weth.mint(alice, 1 ether);
+
+        vm.startPrank(alice);
+        weth.approve(address(pool), 1 ether);
+        pool.supply(address(weth), 1 ether, alice);
+
+        pool.setUserUseReserveAsCollateral(address(weth), true);
+        vm.stopPrank();
+
+        assertTrue(pool.isUsingAsCollateral(alice, address(weth)));
+
+        DataTypes.AccountData memory data = pool.getUserAccountData(alice);
+
+        assertEq(data.collateralValueWad, 2000e18);
+        assertEq(data.debtValueWad, 0);
+        assertEq(data.borrowCapacityWad, 1500e18);
+        assertEq(data.liquidationCapacityWad, 1600e18);
+        assertEq(data.availableBorrowsWad, 1500e18);
+        assertEq(data.healthFactorWad, type(uint256).max);
+
+        _setupUsdcReserve();
+
+        DataTypes.ReserveData memory reserve = pool.getReserveData(address(usdc));
+
+        ScaledDebtToken debtToken = ScaledDebtToken(reserve.debtToken);
+
+        vm.prank(address(pool));
+        debtToken.mintScaled(alice, 1550e6);
+
+        data = pool.getUserAccountData(alice);
+
+        assertEq(data.collateralValueWad, 2000e18);
+        assertEq(data.debtValueWad, 1550e18);
+        assertEq(data.borrowCapacityWad, 1500e18);
+        assertEq(data.liquidationCapacityWad, 1600e18);
+        assertEq(data.availableBorrowsWad, 0);
+        assertEq(data.healthFactorWad, Math.mulDiv(1600e18, 1e18, 1550e18, Math.Rounding.Floor)); //1600 / 1550 > 1
+    }
+
+    function test_getUserAccountData_emptyUser() public {
+        _registerMarketContracts();
+        _setupWethReserve();
+
+        weth.mint(alice, 1 ether);
+
+        vm.startPrank(alice);
+        weth.approve(address(pool), 1 ether);
+        pool.supply(address(weth), 1 ether, alice);
+
+        pool.setUserUseReserveAsCollateral(address(weth), true);
+        vm.stopPrank();
+
+        assertTrue(pool.isUsingAsCollateral(alice, address(weth)));
+
+        DataTypes.AccountData memory data = pool.getUserAccountData(bob);
+
+        assertEq(data.collateralValueWad, 0e18);
+        assertEq(data.debtValueWad, 0);
+        assertEq(data.borrowCapacityWad, 0e18);
+        assertEq(data.liquidationCapacityWad, 0e18);
+        assertEq(data.availableBorrowsWad, 0e18);
+        assertEq(data.healthFactorWad, type(uint256).max);
+    }
+
+    function test_getUserAccountData_revertsWithoutPriceOracle() public {
+        vm.startPrank(admin);
+        provider.setPool(address(pool));
+        provider.setPoolConfigurator(address(configurator));
+        vm.stopPrank();
+
+        vm.expectRevert(Pool.PriceOracleNotConfigured.selector);
+        pool.getUserAccountData(alice);
+    }
+
+    function test_getUserAccountData_revertsWhenCollateralPriceIsStale() public {
+        _registerMarketContracts();
+        _setupWethReserve();
+
+        weth.mint(alice, 1 ether);
+
+        vm.startPrank(alice);
+        weth.approve(address(pool), 1 ether);
+        pool.supply(address(weth), 1 ether, alice);
+        pool.setUserUseReserveAsCollateral(address(weth), true);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 1 hours + 1);
+
+        vm.expectRevert();
+        pool.getUserAccountData(alice);
+    }
 }
