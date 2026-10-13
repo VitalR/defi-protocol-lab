@@ -34,9 +34,12 @@ contract Pool is IPool, ReentrancyGuard {
     error WithdrawExceedsSupply(uint256 requested, uint256 available);
     error InsufficientLiquidity(uint256 requested, uint256 available);
     error InvalidParams();
+    error InsufficientCollateral(uint256 debtValueWad, uint256 liquidationCapacityWad);
     error CollateralNotEnabled(address asset);
     error NoSupplyPosition(address user, address asset);
     error PriceOracleNotConfigured();
+    error BorrowingDisabled(address asset);
+    error BorrowExceedsCapacity(uint256 debtValueWad, uint256 borrowCapacityWad);
 
     event ReserveInitialized(
         address indexed asset, address indexed supplyToken, address indexed debtToken, uint8 decimals
@@ -53,6 +56,9 @@ contract Pool is IPool, ReentrancyGuard {
     );
     event Withdrawn(
         address indexed asset, address indexed user, address indexed to, uint256 actualAmount, uint256 scaledAmount
+    );
+    event Borrowed(
+        address indexed asset, address indexed caller, address indexed onBehalfOf, uint256 amount, uint256 scaledAmount
     );
     event UserCollateralUsageChanged(address indexed user, address indexed asset, bool enabled);
 
@@ -188,6 +194,8 @@ contract Pool is IPool, ReentrancyGuard {
         DataTypes.ReserveData storage reserve = _getInitializedReserve(asset);
         ScaledSupplyToken supplyToken = ScaledSupplyToken(reserve.supplyToken);
 
+        bool wasUsingAsCollateral = _usingAsCollateral[msg.sender][asset];
+
         uint256 userScaledSupply = supplyToken.scaledBalanceOf(msg.sender);
         uint256 userSupply =
             Math.mulDiv(userScaledSupply, reserve.state.liquidityIndex, DecimalMath.WAD, Math.Rounding.Floor);
@@ -213,6 +221,11 @@ contract Pool is IPool, ReentrancyGuard {
 
         supplyToken.burnScaled(msg.sender, scaledAmount);
 
+        // Evaluate the remaining position after burning supply shares.
+        if (wasUsingAsCollateral) {
+            _validateUserHealth(msg.sender);
+        }
+
         supplyToken.transferUnderlyingTo(to, withdrawn);
 
         _updateRates(asset);
@@ -220,8 +233,49 @@ contract Pool is IPool, ReentrancyGuard {
         emit Withdrawn(asset, msg.sender, to, withdrawn, scaledAmount);
     }
 
-    function setUserUseReserveAsCollateral(address asset, bool enabled) external {
+    function borrow(address asset, uint256 amount, address onBehalfOf) external nonReentrant {
+        require(asset != address(0) && onBehalfOf != address(0), ZeroAddress());
+        require(amount > 0, ZeroAmount());
+
+        DataTypes.ReserveData storage reserve = _getInitializedReserve(asset);
+
+        require(reserve.configuration.borrowingEnabled, BorrowingDisabled(asset));
+
+        _accrueReserve(asset);
+
+        ScaledSupplyToken supplyToken = ScaledSupplyToken(reserve.supplyToken);
+        ScaledDebtToken debtToken = ScaledDebtToken(reserve.debtToken);
+
+        require(
+            amount <= reserve.state.availableLiquidity, InsufficientLiquidity(amount, reserve.state.availableLiquidity)
+        );
+
+        uint256 scaledAmount = Math.mulDiv(amount, DecimalMath.WAD, reserve.state.borrowIndex, Math.Rounding.Ceil);
+
+        reserve.state.availableLiquidity -= amount;
+
+        debtToken.mintBorrow(msg.sender, onBehalfOf, amount, scaledAmount);
+
+        DataTypes.AccountData memory data = getUserAccountData(onBehalfOf);
+
+        require(
+            data.debtValueWad <= data.borrowCapacityWad,
+            BorrowExceedsCapacity(data.debtValueWad, data.borrowCapacityWad)
+        );
+
+        supplyToken.transferUnderlyingTo(msg.sender, amount);
+
+        _updateRates(asset);
+
+        emit Borrowed(asset, msg.sender, onBehalfOf, amount, scaledAmount);
+    }
+
+    function setUserUseReserveAsCollateral(address asset, bool enabled) external nonReentrant {
+        bool wasEnabled = _usingAsCollateral[msg.sender][asset];
+
         _setUserUseReserveAsCollateral(msg.sender, asset, enabled);
+
+        if (wasEnabled && !enabled) _validateUserHealth(msg.sender);
     }
 
     function _setUserUseReserveAsCollateral(address user, address asset, bool enabled) internal {
@@ -244,7 +298,7 @@ contract Pool is IPool, ReentrancyGuard {
         return _usingAsCollateral[user][asset];
     }
 
-    function getUserAccountData(address user) external view returns (DataTypes.AccountData memory) {
+    function getUserAccountData(address user) public view returns (DataTypes.AccountData memory) {
         address oracle = ADDRESSES_PROVIDER.getPriceOracle();
         require(oracle != address(0), PriceOracleNotConfigured());
 
@@ -481,5 +535,28 @@ contract Pool is IPool, ReentrancyGuard {
     function _currentLiquidityIndex(address asset) internal view returns (uint256) {
         return _previewLiquidityIndex(asset, block.timestamp);
     }
-}
 
+    function _hasDebt(address user) internal view returns (bool) {
+        for (uint256 i; i < _reservesList.length; ++i) {
+            DataTypes.ReserveData storage reserve = _reserves[_reservesList[i]];
+
+            if (ScaledDebtToken(reserve.debtToken).scaledBalanceOf(user) > 0) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    function _validateUserHealth(address user) internal view {
+        // No debt means no collateral requirement and no price dependency.
+        if (!_hasDebt(user)) return;
+
+        DataTypes.AccountData memory data = getUserAccountData(user);
+
+        require(
+            data.debtValueWad <= data.liquidationCapacityWad,
+            InsufficientCollateral(data.debtValueWad, data.liquidationCapacityWad)
+        );
+    }
+}
