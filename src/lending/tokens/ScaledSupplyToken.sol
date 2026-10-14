@@ -3,6 +3,7 @@ pragma solidity ^0.8.35;
 
 import { IERC20Metadata } from "@openzeppelin/contracts/interfaces/IERC20Metadata.sol";
 import { IIndexProvider } from "src/lending/interfaces/IIndexProvider.sol";
+import { IPool } from "src/lending/interfaces/IPool.sol";
 import { DecimalMath, Math } from "src/common/math/DecimalMath.sol";
 import { TokenTransfer } from "src/common/token/TokenTransfer.sol";
 
@@ -128,6 +129,8 @@ contract ScaledSupplyToken is IERC20Metadata {
 
                 _scaledBalances[to] += scaledAmount;
             }
+            // Pool validates the sender's remaining collateral position.
+            IPool(POOL).finalizeTransfer(UNDERLYING_ASSET, from, to);
         }
 
         emit Transfer(from, to, actualAmount);

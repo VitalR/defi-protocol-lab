@@ -14,6 +14,10 @@ interface IPool {
 
     function withdraw(address asset, uint256 amount, address to) external returns (uint256 withdrawn);
 
+    function borrow(address asset, uint256 amount, address onBehalfOf) external;
+
+    function finalizeTransfer(address asset, address from, address to) external;
+
     function setUserUseReserveAsCollateral(address asset, bool enabled) external;
 
     function isUsingAsCollateral(address user, address asset) external view returns (bool);

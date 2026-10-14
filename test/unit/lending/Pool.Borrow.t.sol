@@ -441,4 +441,165 @@ contract PoolBorrowTest is Test {
         assertEq(usdcDebtToken.borrowAllowance(alice, charlie), 2000e6);
         assertEq(usdcDebtToken.balanceOf(charlie), 0);
     }
+
+    function test_finalizeTransfer() public {
+        _registerMarketContracts();
+        _setupWethReserve();
+        _setupUsdcReserve();
+
+        DataTypes.ReserveData memory wethReserve = pool.getReserveData(address(weth));
+        DataTypes.ReserveData memory usdcReserve = pool.getReserveData(address(usdc));
+
+        ScaledSupplyToken wethSupplyToken = ScaledSupplyToken(wethReserve.supplyToken);
+        ScaledSupplyToken usdcSupplyToken = ScaledSupplyToken(usdcReserve.supplyToken);
+        ScaledDebtToken usdcDebtToken = ScaledDebtToken(usdcReserve.debtToken);
+
+        // Alice supplies collateral.
+        weth.mint(alice, 1 ether);
+
+        vm.startPrank(alice);
+        weth.approve(address(pool), 1 ether);
+        pool.supply(address(weth), 1 ether, alice);
+        pool.setUserUseReserveAsCollateral(address(weth), true);
+        vm.stopPrank();
+
+        // Bob funds the USDC reserve.
+        usdc.mint(bob, 2000e6);
+
+        vm.startPrank(bob);
+        usdc.approve(address(pool), 2000e6);
+        pool.supply(address(usdc), 2000e6, bob);
+        vm.stopPrank();
+
+        // Indexes are WAD: actual and scaled debt match.
+        assertEq(pool.currentBorrowIndex(address(usdc)), DecimalMath.WAD);
+        assertEq(pool.availableLiquidity(address(usdc)), 2000e6);
+        assertEq(usdc.balanceOf(alice), 0);
+        assertEq(usdcDebtToken.balanceOf(alice), 0);
+
+        vm.prank(alice);
+        pool.borrow(address(usdc), 1000e6, alice);
+
+        // Underlying movement.
+        assertEq(usdc.balanceOf(alice), 1000e6);
+        assertEq(usdc.balanceOf(bob), 0);
+        assertEq(usdc.balanceOf(address(pool)), 0);
+        assertEq(usdc.balanceOf(address(usdcSupplyToken)), 1000e6);
+        assertEq(pool.availableLiquidity(address(usdc)), 1000e6);
+
+        // aWETH movement.
+        assertEq(wethSupplyToken.balanceOf(alice), 1 ether);
+        assertEq(wethSupplyToken.balanceOf(bob), 0);
+
+        // Risk data includes the newly created debt.
+        DataTypes.AccountData memory data = pool.getUserAccountData(alice);
+
+        assertEq(data.collateralValueWad, 2000e18);
+        assertEq(data.debtValueWad, 1000e18);
+        assertEq(data.borrowCapacityWad, 1500e18);
+        assertEq(data.liquidationCapacityWad, 1600e18);
+        assertEq(data.availableBorrowsWad, 500e18);
+        assertEq(data.healthFactorWad, 1.6e18);
+
+        vm.prank(alice);
+        wethSupplyToken.transfer(bob, 0.3 ether); //0.3 aWETH
+
+        assertEq(wethSupplyToken.balanceOf(alice), 0.7 ether);
+        assertEq(wethSupplyToken.balanceOf(bob), 0.3 ether);
+
+        data = pool.getUserAccountData(alice);
+
+        assertEq(data.liquidationCapacityWad, 1120e18);
+
+        vm.prank(alice);
+        wethSupplyToken.approve(bob, 0.3 ether);
+        assertEq(wethSupplyToken.allowance(alice, bob), 0.3 ether);
+
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(Pool.InsufficientCollateral.selector, 1000e18, 640e18));
+        wethSupplyToken.transferFrom(alice, bob, 0.3 ether);
+
+        assertEq(wethSupplyToken.allowance(alice, bob), 0.3 ether);
+
+        assertEq(wethSupplyToken.balanceOf(alice), 0.7 ether);
+        assertEq(wethSupplyToken.balanceOf(bob), 0.3 ether);
+
+        data = pool.getUserAccountData(alice);
+        assertEq(data.collateralValueWad, 1400e18);
+        assertEq(data.debtValueWad, 1000e18);
+        assertEq(data.borrowCapacityWad, 1050e18);
+        assertEq(data.liquidationCapacityWad, 1120e18);
+        assertEq(data.availableBorrowsWad, 50e18);
+        assertEq(data.healthFactorWad, 1.12e18);
+
+        assertFalse(pool.isUsingAsCollateral(bob, address(weth)));
+
+        data = pool.getUserAccountData(bob);
+        assertEq(data.collateralValueWad, 0e18);
+        assertEq(data.debtValueWad, 0e18);
+        assertEq(data.borrowCapacityWad, 0e18);
+        assertEq(data.liquidationCapacityWad, 0e18);
+        assertEq(data.availableBorrowsWad, 0e18);
+        assertEq(data.healthFactorWad, type(uint256).max);
+    }
+
+    function test_finalizeTransfer_reverts() public {
+        _registerMarketContracts();
+        _setupWethReserve();
+        _setupUsdcReserve();
+
+        DataTypes.ReserveData memory wethReserve = pool.getReserveData(address(weth));
+        ScaledSupplyToken wethSupplyToken = ScaledSupplyToken(wethReserve.supplyToken);
+
+        vm.expectRevert(abi.encodeWithSelector(Pool.OnlySupplyToken.selector, address(this)));
+        pool.finalizeTransfer(address(weth), alice, bob);
+
+        vm.expectRevert(abi.encodeWithSelector(Pool.UnsupportedAsset.selector, address(wethSupplyToken)));
+        pool.finalizeTransfer(address(wethSupplyToken), alice, bob);
+
+        vm.prank(alice);
+        wethSupplyToken.approve(bob, 0.3 ether);
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(ScaledSupplyToken.InvalidRecipient.selector, address(0)));
+        wethSupplyToken.transferFrom(alice, address(0), 0.3 ether);
+    }
+
+    function test_transfer_fullWithoutDebt_clearsSenderCollateral() public {
+        _registerMarketContracts();
+        _setupWethReserve();
+
+        DataTypes.ReserveData memory reserve = pool.getReserveData(address(weth));
+
+        ScaledSupplyToken supplyToken = ScaledSupplyToken(reserve.supplyToken);
+
+        weth.mint(alice, 1 ether);
+
+        vm.startPrank(alice);
+        weth.approve(address(pool), 1 ether);
+        pool.supply(address(weth), 1 ether, alice);
+        pool.setUserUseReserveAsCollateral(address(weth), true);
+        vm.stopPrank();
+
+        assertTrue(pool.isUsingAsCollateral(alice, address(weth)));
+        assertFalse(pool.isUsingAsCollateral(bob, address(weth)));
+
+        vm.prank(alice);
+        supplyToken.transfer(bob, 1 ether);
+
+        assertEq(supplyToken.scaledBalanceOf(alice), 0);
+        assertEq(supplyToken.balanceOf(bob), 1 ether);
+
+        assertFalse(pool.isUsingAsCollateral(alice, address(weth)));
+        assertFalse(pool.isUsingAsCollateral(bob, address(weth)));
+
+        // Transfer moves the supplier claim; underlying stays in custody.
+        assertEq(weth.balanceOf(address(supplyToken)), 1 ether);
+        assertEq(pool.availableLiquidity(address(weth)), 1 ether);
+        assertEq(pool.totalSupply(address(weth)), 1 ether);
+
+        vm.prank(bob);
+        pool.setUserUseReserveAsCollateral(address(weth), true);
+
+        assertTrue(pool.isUsingAsCollateral(bob, address(weth)));
+    }
 }

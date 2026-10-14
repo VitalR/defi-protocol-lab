@@ -40,6 +40,7 @@ contract Pool is IPool, ReentrancyGuard {
     error PriceOracleNotConfigured();
     error BorrowingDisabled(address asset);
     error BorrowExceedsCapacity(uint256 debtValueWad, uint256 borrowCapacityWad);
+    error OnlySupplyToken(address caller);
 
     event ReserveInitialized(
         address indexed asset, address indexed supplyToken, address indexed debtToken, uint8 decimals
@@ -268,6 +269,28 @@ contract Pool is IPool, ReentrancyGuard {
         _updateRates(asset);
 
         emit Borrowed(asset, msg.sender, onBehalfOf, amount, scaledAmount);
+    }
+
+    function finalizeTransfer(address asset, address from, address to) external nonReentrant {
+        DataTypes.ReserveData storage reserve = _getInitializedReserve(asset);
+
+        require(msg.sender == reserve.supplyToken, OnlySupplyToken(msg.sender));
+
+        require(from != address(0) && to != address(0), ZeroAddress());
+
+        if (from == to) return;
+
+        bool wasUsingAsCollateral = _usingAsCollateral[from][asset];
+
+        if (!wasUsingAsCollateral) return;
+
+        ScaledSupplyToken supplyToken = ScaledSupplyToken(reserve.supplyToken);
+
+        if (supplyToken.scaledBalanceOf(from) == 0) {
+            _setUserUseReserveAsCollateral(from, asset, false);
+        }
+
+        _validateUserHealth(from);
     }
 
     function setUserUseReserveAsCollateral(address asset, bool enabled) external nonReentrant {
