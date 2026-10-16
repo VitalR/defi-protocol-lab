@@ -41,6 +41,8 @@ contract Pool is IPool, ReentrancyGuard {
     error BorrowingDisabled(address asset);
     error BorrowExceedsCapacity(uint256 debtValueWad, uint256 borrowCapacityWad);
     error OnlySupplyToken(address caller);
+    error NoDebtPosition(address user, address asset);
+    error RepayTooSmall(uint256 amount);
 
     event ReserveInitialized(
         address indexed asset, address indexed supplyToken, address indexed debtToken, uint8 decimals
@@ -60,6 +62,9 @@ contract Pool is IPool, ReentrancyGuard {
     );
     event Borrowed(
         address indexed asset, address indexed caller, address indexed onBehalfOf, uint256 amount, uint256 scaledAmount
+    );
+    event Repaid(
+        address indexed asset, address indexed payer, address indexed onBehalfOf, uint256 amount, uint256 scaledAmount
     );
     event UserCollateralUsageChanged(address indexed user, address indexed asset, bool enabled);
 
@@ -269,6 +274,40 @@ contract Pool is IPool, ReentrancyGuard {
         _updateRates(asset);
 
         emit Borrowed(asset, msg.sender, onBehalfOf, amount, scaledAmount);
+    }
+
+    function repay(address asset, uint256 amount, address onBehalfOf) external nonReentrant returns (uint256 repaid) {
+        require(asset != address(0) && onBehalfOf != address(0), ZeroAddress());
+        require(amount > 0, ZeroAmount());
+
+        DataTypes.ReserveData storage reserve = _getInitializedReserve(asset);
+
+        _accrueReserve(asset);
+
+        ScaledDebtToken debtToken = ScaledDebtToken(reserve.debtToken);
+
+        uint256 userScaledDebt = debtToken.scaledBalanceOf(onBehalfOf);
+        require(userScaledDebt > 0, NoDebtPosition(onBehalfOf, asset));
+
+        uint256 userDebt = debtToken.balanceOf(onBehalfOf);
+
+        repaid = Math.min(amount, userDebt);
+
+        uint256 scaledAmount = repaid == userDebt
+            ? userScaledDebt
+            : Math.mulDiv(repaid, DecimalMath.WAD, reserve.state.borrowIndex, Math.Rounding.Floor);
+
+        require(scaledAmount > 0, RepayTooSmall(repaid));
+
+        IERC20Metadata(asset).pullExactTo(msg.sender, address(reserve.supplyToken), repaid);
+
+        reserve.state.availableLiquidity += repaid;
+
+        debtToken.burnScaled(onBehalfOf, scaledAmount);
+
+        _updateRates(asset);
+
+        emit Repaid(asset, msg.sender, onBehalfOf, repaid, scaledAmount);
     }
 
     function finalizeTransfer(address asset, address from, address to) external nonReentrant {
