@@ -842,7 +842,7 @@ contract PoolTest is Test {
         vm.prank(admin);
         vm.expectEmit(true, false, false, true, address(pool));
         emit ReserveConfigured(address(weth), 0.75e18, 0.8e18, false);
-        configurator.configureReserve(address(weth), 0.75e18, 0.8e18, false);
+        configurator.configureReserve(address(weth), 0.75e18, 0.8e18, 1.05e18, false);
 
         reserve = pool.getReserveData(address(weth));
         assertEq(reserve.configuration.ltvWad, 0.75e18);
@@ -857,7 +857,7 @@ contract PoolTest is Test {
         vm.prank(admin);
         vm.expectEmit(true, false, false, true, address(pool));
         emit ReserveConfigured(address(weth), 0.75e18, 0.8e18, false);
-        configurator.configureReserve(address(weth), 0.75e18, 0.8e18, false);
+        configurator.configureReserve(address(weth), 0.75e18, 0.8e18, 1.05e18, false);
 
         DataTypes.ReserveData memory reserve = pool.getReserveData(address(weth));
         assertEq(reserve.configuration.ltvWad, 0.75e18);
@@ -867,7 +867,7 @@ contract PoolTest is Test {
         vm.prank(admin);
         vm.expectEmit(true, false, false, true, address(pool));
         emit ReserveConfigured(address(weth), 0.77e18, 0.85e18, true);
-        configurator.configureReserve(address(weth), 0.77e18, 0.85e18, true);
+        configurator.configureReserve(address(weth), 0.77e18, 0.85e18, 1.05e18, true);
 
         reserve = pool.getReserveData(address(weth));
         assertEq(reserve.configuration.ltvWad, 0.77e18);
@@ -892,7 +892,7 @@ contract PoolTest is Test {
         _setPoolAddresses();
         _setInitReserveWeth();
         vm.prank(admin);
-        configurator.configureReserve(address(weth), 0.75e18, 0.8e18, false);
+        configurator.configureReserve(address(weth), 0.75e18, 0.8e18, 1.05e18, false);
     }
 
     function test_configureReserve_borrowingEnabled_additionalAsset() public {
@@ -905,7 +905,7 @@ contract PoolTest is Test {
         vm.prank(admin);
         vm.expectEmit(true, false, false, true, address(pool));
         emit ReserveConfigured(address(usdc), 0, 0, true);
-        configurator.configureReserve(address(usdc), 0, 0, true);
+        configurator.configureReserve(address(usdc), 0, 0, 0, true);
 
         reserve = pool.getReserveData(address(weth));
         assertEq(reserve.configuration.ltvWad, 0.75e18);
@@ -927,7 +927,7 @@ contract PoolTest is Test {
         vm.prank(admin);
         vm.expectEmit(true, false, false, true, address(pool));
         emit ReserveConfigured(address(usdc), 0, 0.8e18, true);
-        configurator.configureReserve(address(usdc), 0, 0.8e18, true);
+        configurator.configureReserve(address(usdc), 0, 0.8e18, 1.05e18, true);
 
         reserve = pool.getReserveData(address(usdc));
         assertEq(reserve.configuration.ltvWad, 0);
@@ -940,23 +940,23 @@ contract PoolTest is Test {
         _setInitReserveWeth();
 
         vm.expectRevert(); //OwnableUnauthorizedAccount
-        configurator.configureReserve(address(weth), 0.75e18, 0.8e18, false);
+        configurator.configureReserve(address(weth), 0.75e18, 0.8e18, 1.05e18, false);
 
         vm.prank(admin);
         vm.expectRevert(PoolConfigurator.ZeroAddress.selector);
-        configurator.configureReserve(address(0), 0.75e18, 0.8e18, false);
+        configurator.configureReserve(address(0), 0.75e18, 0.8e18, 1.05e18, false);
 
         vm.prank(admin);
         vm.expectRevert(abi.encodeWithSelector(Pool.InvalidUnderlying.selector, alice));
-        configurator.configureReserve(address(alice), 0.75e18, 0.8e18, false);
+        configurator.configureReserve(address(alice), 0.75e18, 0.8e18, 1.05e18, false);
 
         vm.prank(admin);
         vm.expectRevert(abi.encodeWithSelector(Pool.OnlyConfigurator.selector, admin));
-        pool.configureReserve(address(weth), 0.75e18, 0.8e18, false);
+        pool.configureReserve(address(weth), 0.75e18, 0.8e18, 1.05e18, false);
 
         vm.prank(admin);
         vm.expectRevert(abi.encodeWithSelector(Pool.UnsupportedAsset.selector, address(usdc)));
-        configurator.configureReserve(address(usdc), 0.75e18, 0.8e18, false);
+        configurator.configureReserve(address(usdc), 0.75e18, 0.8e18, 1.05e18, false);
 
         DataTypes.ReserveData memory reserve = pool.getReserveData(address(weth));
         assertEq(reserve.configuration.ltvWad, 0);
@@ -973,15 +973,19 @@ contract PoolTest is Test {
 
         vm.prank(admin);
         vm.expectRevert(Pool.InvalidParams.selector);
-        configurator.configureReserve(address(weth), 0.81e18, 0.8e18, false);
+        configurator.configureReserve(address(weth), 0.81e18, 0.8e18, 1.05e18, false);
 
         vm.prank(admin);
         vm.expectRevert(Pool.InvalidParams.selector);
-        configurator.configureReserve(address(weth), 0.79e18, DecimalMath.WAD + 1, false);
+        configurator.configureReserve(address(weth), 0.79e18, DecimalMath.WAD + 1, 1.05e18, false);
 
         vm.prank(admin);
         vm.expectRevert(Pool.InvalidParams.selector);
-        configurator.configureReserve(address(weth), 0.79e18, 0, false);
+        configurator.configureReserve(address(weth), 0.79e18, 0, 1.05e18, false);
+
+        vm.prank(admin);
+        vm.expectRevert(Pool.InvalidParams.selector);
+        configurator.configureReserve(address(weth), 0.79e18, 0, 0.99e18, false);
 
         reserve = pool.getReserveData(address(weth));
         assertEq(reserve.configuration.ltvWad, 0.75e18);
@@ -1039,7 +1043,7 @@ contract PoolTest is Test {
         pool.setUserUseReserveAsCollateral(address(weth), true);
 
         vm.prank(admin);
-        configurator.configureReserve(address(weth), 0.75e18, 0.8e18, false);
+        configurator.configureReserve(address(weth), 0.75e18, 0.8e18, 1.05e18, false);
         DataTypes.ReserveData memory reserve = pool.getReserveData(address(weth));
         assertEq(reserve.configuration.ltvWad, 0.75e18);
         assertEq(reserve.configuration.liquidationThresholdWad, 0.8e18);
@@ -1065,7 +1069,7 @@ contract PoolTest is Test {
         assertTrue(reserve.initialized);
 
         vm.prank(admin);
-        configurator.configureReserve(address(weth), 0.75e18, 0.8e18, false);
+        configurator.configureReserve(address(weth), 0.75e18, 0.8e18, 1.05e18, false);
 
         reserve = pool.getReserveData(address(weth));
         assertEq(reserve.configuration.ltvWad, 0.75e18);
@@ -1092,7 +1096,7 @@ contract PoolTest is Test {
         assertTrue(pool.isUsingAsCollateral(alice, address(weth)));
 
         vm.prank(admin);
-        configurator.configureReserve(address(weth), 0, 0, false);
+        configurator.configureReserve(address(weth), 0, 0, 0, false);
 
         vm.prank(alice);
         vm.expectEmit(true, true, false, true, address(pool));
@@ -1216,7 +1220,7 @@ contract PoolTest is Test {
 
         _setInitReserveUsdc();
         vm.prank(admin);
-        configurator.configureReserve(address(usdc), 0.75e18, 0.8e18, true);
+        configurator.configureReserve(address(usdc), 0.75e18, 0.8e18, 1.05e18, true);
 
         usdc.mint(alice, 1000e6);
         vm.startPrank(alice);
@@ -1297,7 +1301,7 @@ contract PoolTest is Test {
         _supplyAliceUsdc(12);
 
         vm.prank(admin);
-        configurator.configureReserve(address(usdc), 0.75e18, 0.8e18, true);
+        configurator.configureReserve(address(usdc), 0.75e18, 0.8e18, 1.05e18, true);
 
         vm.startPrank(alice);
 

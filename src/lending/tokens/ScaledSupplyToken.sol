@@ -106,6 +106,26 @@ contract ScaledSupplyToken is IERC20Metadata {
         IERC20Metadata(address(UNDERLYING_ASSET)).pushExact(to, amount);
     }
 
+    function transferOnLiquidation(address from, address to, uint256 scaledAmount) external onlyPool {
+        require(from != address(0), ZeroAddress());
+        require(to != address(0), InvalidRecipient(to));
+        require(scaledAmount > 0, ZeroScaledAmount());
+
+        uint256 fromScaledBalance = _scaledBalances[from];
+
+        require(scaledAmount <= fromScaledBalance, ScaledBalanceExceeded(from, scaledAmount, fromScaledBalance));
+
+        if (from == to) return;
+
+        uint256 index = _currentLiquidityIndex();
+
+        _scaledBalances[from] = fromScaledBalance - scaledAmount;
+        _scaledBalances[to] += scaledAmount;
+
+        emit Transfer(from, to, _scaledToActual(scaledAmount, index));
+        emit BalanceTransfer(from, to, scaledAmount, index);
+    }
+
     function transfer(address to, uint256 amount) external override returns (bool) {
         _transferActual(msg.sender, to, amount);
 

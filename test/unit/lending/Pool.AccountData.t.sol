@@ -118,21 +118,21 @@ contract PoolAccountDataTest is Test {
     function _initializeWethReserve() internal {
         vm.startPrank(admin);
         configurator.initReserve(address(weth));
-        configurator.configureReserve(address(weth), 0.75e18, 0.8e18, false);
+        configurator.configureReserve(address(weth), 0.75e18, 0.8e18, 1.05e18, false);
         vm.stopPrank();
     }
 
     function _initializeWbtcReserve() internal {
         vm.startPrank(admin);
         configurator.initReserve(address(wbtc));
-        configurator.configureReserve(address(wbtc), 0.7e18, 0.75e18, false);
+        configurator.configureReserve(address(wbtc), 0.7e18, 0.75e18, 1.05e18, false);
         vm.stopPrank();
     }
 
     function _initializeUsdcReserve() internal {
         vm.startPrank(admin);
         configurator.initReserve(address(usdc));
-        configurator.configureReserve(address(usdc), 0, 0, true);
+        configurator.configureReserve(address(usdc), 0, 0, 0, true);
         vm.stopPrank();
     }
 

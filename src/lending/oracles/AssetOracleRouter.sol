@@ -175,6 +175,14 @@ contract AssetOracleRouter is Ownable, IAssetOracle {
         updatedAt = priceUpdatedAt;
     }
 
+    function getAssetPrice(address asset) external view returns (uint256 priceWad, uint256 updatedAt) {
+        require(asset != address(0), ZeroAsset());
+
+        OracleConfig memory config = _getEnabledConfig(asset);
+
+        (priceWad, updatedAt) = config.oracle.latestPrice();
+    }
+
     function _getEnabledConfig(address asset) internal view returns (OracleConfig memory config) {
         config = _configs[asset];
 

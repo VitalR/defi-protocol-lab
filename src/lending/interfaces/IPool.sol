@@ -7,8 +7,13 @@ import { DataTypes } from "src/lending/libraries/DataTypes.sol";
 interface IPool {
     function initReserve(address asset) external;
 
-    function configureReserve(address asset, uint256 ltvWad, uint256 liquidationThresholdWad, bool borrowingEnabled)
-        external;
+    function configureReserve(
+        address asset,
+        uint256 ltvWad,
+        uint256 liquidationThresholdWad,
+        uint256 liquidationBonusWad,
+        bool borrowingEnabled
+    ) external;
 
     function supply(address asset, uint256 amount, address onBehalfOf) external;
 

@@ -25,6 +25,7 @@ library DataTypes {
     struct ReserveConfiguration {
         uint256 ltvWad;
         uint256 liquidationThresholdWad;
+        uint256 liquidationBonusWad;
         bool borrowingEnabled;
     }
 
@@ -35,5 +36,17 @@ library DataTypes {
         uint256 liquidationCapacityWad;
         uint256 availableBorrowsWad;
         uint256 healthFactorWad;
+    }
+
+    struct LiquidationLocalVars {
+        uint256 userScaledDebt;
+        uint256 userDebt;
+        uint256 userScaledCollateral;
+        uint256 userCollateral;
+        uint256 healthFactorWad;
+        uint256 closeFactorWad;
+        uint256 debtBudget;
+        uint256 scaledDebtAmount;
+        uint256 scaledCollateralAmount;
     }
 }

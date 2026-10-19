@@ -10,6 +10,7 @@ import { IIndexProvider } from "src/lending/interfaces/IIndexProvider.sol";
 import { IAssetOracle } from "src/lending/interfaces/IAssetOracle.sol";
 import { AccountDataLogic } from "src/lending/libraries/AccountDataLogic.sol";
 import { DataTypes } from "src/lending/libraries/DataTypes.sol";
+import { LiquidationMath } from "src/lending/libraries/LiquidationMath.sol";
 import { DecimalMath, Math } from "src/common/math/DecimalMath.sol";
 import { TokenTransfer } from "src/common/token/TokenTransfer.sol";
 import { ScaledDebtToken } from "src/lending/tokens/ScaledDebtToken.sol";
@@ -43,6 +44,7 @@ contract Pool is IPool, ReentrancyGuard {
     error OnlySupplyToken(address caller);
     error NoDebtPosition(address user, address asset);
     error RepayTooSmall(uint256 amount);
+    error PositionNotLiquidatable(uint256 healthFactor);
 
     event ReserveInitialized(
         address indexed asset, address indexed supplyToken, address indexed debtToken, uint8 decimals
@@ -66,6 +68,15 @@ contract Pool is IPool, ReentrancyGuard {
     event Repaid(
         address indexed asset, address indexed payer, address indexed onBehalfOf, uint256 amount, uint256 scaledAmount
     );
+    event LiquidationCall(
+        address indexed collateralAsset,
+        address indexed debtAsset,
+        address indexed user,
+        uint256 debtRepaid,
+        uint256 collateralSeized,
+        address liquidator,
+        bool receiveSupplyToken
+    );
     event UserCollateralUsageChanged(address indexed user, address indexed asset, bool enabled);
 
     uint256 public constant BASE_RATE = 0.02e18; // 2%
@@ -74,6 +85,10 @@ contract Pool is IPool, ReentrancyGuard {
     uint256 public constant OPTIMAL_UTILIZATION = 0.8e18; // 80%
     uint256 public constant DEFAULT_RESERVE_FACTOR = 0.1e18; // 10%
     uint256 public constant SECONDS_PER_YEAR = 365 days;
+
+    uint256 public constant DEFAULT_CLOSE_FACTOR_WAD = 0.5e18;
+    uint256 public constant MAX_CLOSE_FACTOR_WAD = 1e18;
+    uint256 public constant CLOSE_FACTOR_HF_THRESHOLD = 0.95e18;
 
     IPoolAddressProvider public immutable override ADDRESSES_PROVIDER;
 
@@ -147,10 +162,13 @@ contract Pool is IPool, ReentrancyGuard {
         emit ReserveInitialized(asset, address(supplyToken), address(debtToken), assetDecimals);
     }
 
-    function configureReserve(address asset, uint256 ltvWad, uint256 liquidationThresholdWad, bool borrowingEnabled)
-        external
-        onlyConfigurator
-    {
+    function configureReserve(
+        address asset,
+        uint256 ltvWad,
+        uint256 liquidationThresholdWad,
+        uint256 liquidationBonusWad,
+        bool borrowingEnabled
+    ) external onlyConfigurator {
         require(asset != address(0), ZeroAddress());
 
         require(asset.code.length > 0, InvalidUnderlying(asset));
@@ -158,11 +176,18 @@ contract Pool is IPool, ReentrancyGuard {
         DataTypes.ReserveData storage reserve = _getInitializedReserve(asset);
 
         require(ltvWad <= liquidationThresholdWad && liquidationThresholdWad <= DecimalMath.WAD, InvalidParams());
+        if (liquidationThresholdWad > 0) require(liquidationBonusWad > DecimalMath.WAD, InvalidParams());
+        require(
+            Math.mulDiv(liquidationThresholdWad, liquidationBonusWad, DecimalMath.WAD, Math.Rounding.Ceil)
+                <= DecimalMath.WAD,
+            InvalidParams()
+        );
 
         DataTypes.ReserveConfiguration storage config = reserve.configuration;
 
         config.ltvWad = ltvWad;
         config.liquidationThresholdWad = liquidationThresholdWad;
+        config.liquidationBonusWad = liquidationBonusWad;
         config.borrowingEnabled = borrowingEnabled;
 
         emit ReserveConfigured(asset, config.ltvWad, config.liquidationThresholdWad, config.borrowingEnabled);
@@ -330,6 +355,106 @@ contract Pool is IPool, ReentrancyGuard {
         }
 
         _validateUserHealth(from);
+    }
+
+    function liquidationCall(
+        address collateralAsset,
+        address debtAsset,
+        address user,
+        uint256 debtToCover,
+        bool receiveSupplyToken
+    ) external nonReentrant returns (uint256 debtRepaid, uint256 collateralSeized) {
+        require(collateralAsset != address(0) && debtAsset != address(0) && user != address(0), ZeroAddress());
+        require(debtToCover > 0, ZeroAmount());
+
+        DataTypes.ReserveData storage collateralReserve = _getInitializedReserve(collateralAsset);
+
+        DataTypes.ReserveData storage debtReserve = _getInitializedReserve(debtAsset);
+
+        _accrueReserve(debtAsset);
+
+        if (collateralAsset != debtAsset) {
+            _accrueReserve(collateralAsset);
+        }
+
+        DataTypes.LiquidationLocalVars memory vars;
+
+        vars.userScaledDebt = ScaledDebtToken(debtReserve.debtToken).scaledBalanceOf(user);
+
+        require(vars.userScaledDebt > 0, NoDebtPosition(user, debtAsset));
+
+        vars.userDebt = ScaledDebtToken(debtReserve.debtToken).balanceOf(user);
+
+        require(
+            _usingAsCollateral[user][collateralAsset] && collateralReserve.configuration.liquidationThresholdWad > 0,
+            CollateralNotEnabled(collateralAsset)
+        );
+
+        vars.userScaledCollateral = ScaledSupplyToken(collateralReserve.supplyToken).scaledBalanceOf(user);
+
+        require(vars.userScaledCollateral > 0, NoSupplyPosition(user, collateralAsset));
+
+        vars.healthFactorWad = getUserAccountData(user).healthFactorWad;
+
+        require(vars.healthFactorWad < DecimalMath.WAD, PositionNotLiquidatable(vars.healthFactorWad));
+
+        vars.closeFactorWad =
+            vars.healthFactorWad > CLOSE_FACTOR_HF_THRESHOLD ? DEFAULT_CLOSE_FACTOR_WAD : MAX_CLOSE_FACTOR_WAD;
+
+        vars.debtBudget = Math.min(
+            debtToCover, Math.mulDiv(vars.userDebt, vars.closeFactorWad, DecimalMath.WAD, Math.Rounding.Floor)
+        );
+
+        vars.userCollateral = ScaledSupplyToken(collateralReserve.supplyToken).balanceOf(user);
+
+        (debtRepaid, collateralSeized) =
+            _calculateLiquidationAmounts(collateralAsset, debtAsset, vars.debtBudget, vars.userCollateral);
+
+        vars.scaledDebtAmount = debtRepaid == vars.userDebt
+            ? vars.userScaledDebt
+            : Math.mulDiv(debtRepaid, DecimalMath.WAD, debtReserve.state.borrowIndex, Math.Rounding.Floor);
+
+        require(vars.scaledDebtAmount > 0, RepayTooSmall(debtRepaid));
+
+        vars.scaledCollateralAmount = collateralSeized == vars.userCollateral
+            ? vars.userScaledCollateral
+            : Math.mulDiv(collateralSeized, DecimalMath.WAD, collateralReserve.state.liquidityIndex, Math.Rounding.Ceil);
+
+        IERC20Metadata(debtAsset).pullExactTo(msg.sender, debtReserve.supplyToken, debtRepaid);
+
+        debtReserve.state.availableLiquidity += debtRepaid;
+
+        ScaledDebtToken(debtReserve.debtToken).burnScaled(user, vars.scaledDebtAmount);
+
+        if (receiveSupplyToken) {
+            ScaledSupplyToken(collateralReserve.supplyToken)
+                .transferOnLiquidation(user, msg.sender, vars.scaledCollateralAmount);
+        } else {
+            require(
+                collateralSeized <= collateralReserve.state.availableLiquidity,
+                InsufficientLiquidity(collateralSeized, collateralReserve.state.availableLiquidity)
+            );
+
+            collateralReserve.state.availableLiquidity -= collateralSeized;
+
+            ScaledSupplyToken(collateralReserve.supplyToken).burnScaled(user, vars.scaledCollateralAmount);
+
+            ScaledSupplyToken(collateralReserve.supplyToken).transferUnderlyingTo(msg.sender, collateralSeized);
+        }
+
+        if (ScaledSupplyToken(collateralReserve.supplyToken).scaledBalanceOf(user) == 0) {
+            _setUserUseReserveAsCollateral(user, collateralAsset, false);
+        }
+
+        _updateRates(debtAsset);
+
+        if (collateralAsset != debtAsset) {
+            _updateRates(collateralAsset);
+        }
+
+        emit LiquidationCall(
+            collateralAsset, debtAsset, user, debtRepaid, collateralSeized, msg.sender, receiveSupplyToken
+        );
     }
 
     function setUserUseReserveAsCollateral(address asset, bool enabled) external nonReentrant {
@@ -620,5 +745,29 @@ contract Pool is IPool, ReentrancyGuard {
             data.debtValueWad <= data.liquidationCapacityWad,
             InsufficientCollateral(data.debtValueWad, data.liquidationCapacityWad)
         );
+    }
+
+    function _calculateLiquidationAmounts(
+        address collateralAsset,
+        address debtAsset,
+        uint256 debtBudget,
+        uint256 userCollateral
+    ) internal view returns (uint256 debtRepaid, uint256 collateralSeized) {
+        IAssetOracle oracle = IAssetOracle(ADDRESSES_PROVIDER.getPriceOracle());
+
+        LiquidationMath.QuoteParams memory params;
+
+        params.debtBudget = debtBudget;
+        params.collateralBalance = userCollateral;
+
+        (params.debtPriceWad,) = oracle.getAssetPrice(debtAsset);
+        (params.collateralPriceWad,) = oracle.getAssetPrice(collateralAsset);
+
+        params.liquidationBonusWad = _reserves[collateralAsset].configuration.liquidationBonusWad;
+
+        params.debtDecimals = _reserves[debtAsset].decimals;
+        params.collateralDecimals = _reserves[collateralAsset].decimals;
+
+        return LiquidationMath.calculateAmounts(params);
     }
 }
