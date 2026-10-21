@@ -252,7 +252,7 @@ contract PoolBorrowAndRepayTest is Test {
         assertEq(usdcReserve.state.currentLiquidityRate, 0.02025e18);
 
         // No elapsed time means no accrued interest yet.
-        assertEq(usdcReserve.state.accruedToTreasury, 0);
+        assertEq(usdcReserve.state.accruedToTreasuryScaled, 0);
         assertEq(usdcReserve.state.lastUpdateTimestamp, block.timestamp);
     }
 
@@ -358,7 +358,7 @@ contract PoolBorrowAndRepayTest is Test {
         assertEq(usdcReserve.state.currentLiquidityRate, 0.02025e18);
 
         // No elapsed time means no accrued interest yet.
-        assertEq(usdcReserve.state.accruedToTreasury, 0);
+        assertEq(usdcReserve.state.accruedToTreasuryScaled, 0);
         assertEq(usdcReserve.state.lastUpdateTimestamp, block.timestamp);
     }
 
@@ -711,7 +711,7 @@ contract PoolBorrowAndRepayTest is Test {
         assertEq(usdcReserve.state.currentLiquidityRate, 0.02025e18);
 
         // No elapsed time means no accrued interest yet.
-        assertEq(usdcReserve.state.accruedToTreasury, 0);
+        assertEq(usdcReserve.state.accruedToTreasuryScaled, 0);
         assertEq(usdcReserve.state.lastUpdateTimestamp, block.timestamp);
 
         vm.startPrank(alice);
@@ -780,7 +780,7 @@ contract PoolBorrowAndRepayTest is Test {
         assertEq(usdcReserve.state.currentLiquidityRate, 0);
 
         assertEq(usdcSupplyToken.balanceOf(bob), 2000e6);
-        assertEq(usdcReserve.state.accruedToTreasury, 0);
+        assertEq(usdcReserve.state.accruedToTreasuryScaled, 0);
 
         data = pool.getUserAccountData(alice);
 
@@ -874,7 +874,7 @@ contract PoolBorrowAndRepayTest is Test {
         assertEq(usdcReserve.state.currentLiquidityRate, 0.02025e18);
 
         // No elapsed time means no accrued interest yet.
-        assertEq(usdcReserve.state.accruedToTreasury, 0);
+        assertEq(usdcReserve.state.accruedToTreasuryScaled, 0);
         assertEq(usdcReserve.state.lastUpdateTimestamp, block.timestamp);
 
         skip(365 days);
@@ -918,7 +918,7 @@ contract PoolBorrowAndRepayTest is Test {
 
         assertEq(beforeRepay.state.borrowIndex, DecimalMath.WAD);
         assertEq(beforeRepay.state.liquidityIndex, DecimalMath.WAD);
-        assertEq(beforeRepay.state.accruedToTreasury, 0);
+        assertEq(beforeRepay.state.accruedToTreasuryScaled, 0);
         assertEq(beforeRepay.state.lastUpdateTimestamp, block.timestamp - 365 days);
 
         // Utilization uses current debt: it has increased above 50%.
@@ -953,7 +953,9 @@ contract PoolBorrowAndRepayTest is Test {
 
         assertEq(usdcReserve.state.borrowIndex, 1.045e18);
         assertEq(usdcReserve.state.liquidityIndex, 1.02025e18);
-        assertEq(usdcReserve.state.accruedToTreasury, 4.5e6);
+        uint256 expectedTreasuryScaled = Math.mulDiv(4.5e6, DecimalMath.WAD, 1.02025e18, Math.Rounding.Floor);
+
+        assertEq(usdcReserve.state.accruedToTreasuryScaled, expectedTreasuryScaled);
         assertEq(usdcReserve.state.lastUpdateTimestamp, block.timestamp);
 
         assertEq(usdcReserve.state.currentBorrowRate, pool.BASE_RATE());
@@ -1043,7 +1045,7 @@ contract PoolBorrowAndRepayTest is Test {
         assertEq(usdcReserve.state.currentLiquidityRate, 0.02025e18);
 
         // No elapsed time means no accrued interest yet.
-        assertEq(usdcReserve.state.accruedToTreasury, 0);
+        assertEq(usdcReserve.state.accruedToTreasuryScaled, 0);
         assertEq(usdcReserve.state.lastUpdateTimestamp, block.timestamp);
 
         assertEq(pool.totalDebt(address(usdc)), 1000e6);
@@ -1173,8 +1175,11 @@ contract PoolBorrowAndRepayTest is Test {
 
         assertEq(reserve.state.borrowIndex, 1.045e18);
         assertEq(reserve.state.liquidityIndex, 1.02025e18);
-        assertEq(reserve.state.accruedToTreasury, 4.5e6);
         assertEq(reserve.state.lastUpdateTimestamp, block.timestamp);
+
+        // assertEq(reserve.state.accruedToTreasury, 4.5e6);
+        uint256 expectedTreasuryScaled = Math.mulDiv(4.5e6, DecimalMath.WAD, 1.02025e18, Math.Rounding.Floor);
+        assertEq(reserve.state.accruedToTreasuryScaled, expectedTreasuryScaled);
     }
 
     function test_repay_revertsWhenScaledBurnIsZero() public {
@@ -1210,7 +1215,7 @@ contract PoolBorrowAndRepayTest is Test {
 
         assertEq(afterRepay.state.borrowIndex, beforeRepay.state.borrowIndex);
         assertEq(afterRepay.state.liquidityIndex, beforeRepay.state.liquidityIndex);
-        assertEq(afterRepay.state.accruedToTreasury, beforeRepay.state.accruedToTreasury);
+        assertEq(afterRepay.state.accruedToTreasuryScaled, beforeRepay.state.accruedToTreasuryScaled);
         assertEq(afterRepay.state.lastUpdateTimestamp, beforeRepay.state.lastUpdateTimestamp);
     }
 }

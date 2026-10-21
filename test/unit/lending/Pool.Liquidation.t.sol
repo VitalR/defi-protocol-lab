@@ -686,7 +686,9 @@ contract PoolLiquidationTest is Test {
 
         assertEq(usdcReserve.state.borrowIndex, 1.045e18);
         assertEq(usdcReserve.state.liquidityIndex, 1.02025e18);
-        assertEq(usdcReserve.state.accruedToTreasury, 4.5e6);
+        uint256 expectedTreasuryScaled = Math.mulDiv(4.5e6, DecimalMath.WAD, 1.02025e18, Math.Rounding.Floor);
+
+        assertEq(usdcReserve.state.accruedToTreasuryScaled, expectedTreasuryScaled);
         assertEq(usdcReserve.state.lastUpdateTimestamp, block.timestamp);
 
         // Collateral:            0.5625 WETH × $1200 = $675

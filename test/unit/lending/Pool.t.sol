@@ -259,7 +259,7 @@ contract PoolTest is Test {
         assertEq(pool.totalDebt(address(usdc)), 0);
 
         reserve = pool.getReserveData(address(usdc));
-        assertEq(reserve.state.accruedToTreasury, 0);
+        assertEq(reserve.state.accruedToTreasuryScaled, 0);
 
         // 2d supply
 
@@ -276,7 +276,7 @@ contract PoolTest is Test {
 
         reserve = pool.getReserveData(address(usdc));
 
-        assertEq(reserve.state.accruedToTreasury, 0);
+        assertEq(reserve.state.accruedToTreasuryScaled, 0);
         assertEq(reserve.state.lastUpdateTimestamp, timePast);
 
         assertEq(pool.currentLiquidityIndex(address(usdc)), DecimalMath.WAD);

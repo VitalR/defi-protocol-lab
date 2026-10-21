@@ -15,7 +15,7 @@ library DataTypes {
         uint256 borrowIndex;
         uint256 liquidityIndex;
         uint256 availableLiquidity;
-        uint256 accruedToTreasury;
+        uint256 accruedToTreasuryScaled;
         uint256 currentBorrowRate;
         uint256 currentLiquidityRate;
         uint256 reserveFactor;

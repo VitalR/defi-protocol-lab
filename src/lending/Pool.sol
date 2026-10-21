@@ -45,6 +45,7 @@ contract Pool is IPool, ReentrancyGuard {
     error NoDebtPosition(address user, address asset);
     error RepayTooSmall(uint256 amount);
     error PositionNotLiquidatable(uint256 healthFactor);
+    error TreasuryNotConfigured();
 
     event ReserveInitialized(
         address indexed asset, address indexed supplyToken, address indexed debtToken, uint8 decimals
@@ -77,6 +78,7 @@ contract Pool is IPool, ReentrancyGuard {
         address liquidator,
         bool receiveSupplyToken
     );
+    event MintedToTreasury(address indexed asset, address indexed treasury, uint256 actualAmount, uint256 scaledAmount);
     event UserCollateralUsageChanged(address indexed user, address indexed asset, bool enabled);
 
     uint256 public constant BASE_RATE = 0.02e18; // 2%
@@ -457,6 +459,34 @@ contract Pool is IPool, ReentrancyGuard {
         );
     }
 
+    function mintToTreasury(address[] calldata assets) external nonReentrant {
+        address treasury = ADDRESSES_PROVIDER.getTreasury();
+        require(treasury != address(0), TreasuryNotConfigured());
+
+        for (uint256 i; i < assets.length; ++i) {
+            address asset = assets[i];
+
+            DataTypes.ReserveData storage reserve = _getInitializedReserve(asset);
+
+            _accrueReserve(asset);
+
+            uint256 scaledAmount = reserve.state.accruedToTreasuryScaled;
+
+            if (scaledAmount != 0) {
+                uint256 actualAmount =
+                    Math.mulDiv(scaledAmount, reserve.state.liquidityIndex, DecimalMath.WAD, Math.Rounding.Floor);
+
+                reserve.state.accruedToTreasuryScaled = 0;
+
+                ScaledSupplyToken(reserve.supplyToken).mintScaled(treasury, scaledAmount);
+
+                emit MintedToTreasury(asset, treasury, actualAmount, scaledAmount);
+            }
+
+            _updateRates(asset);
+        }
+    }
+
     function setUserUseReserveAsCollateral(address asset, bool enabled) external nonReentrant {
         bool wasEnabled = _usingAsCollateral[msg.sender][asset];
 
@@ -582,28 +612,29 @@ contract Pool is IPool, ReentrancyGuard {
 
     function _accrueReserve(address asset) internal {
         DataTypes.ReserveData storage reserve = _getInitializedReserve(asset);
+        DataTypes.ReserveState storage state = reserve.state;
 
-        if (block.timestamp == reserve.state.lastUpdateTimestamp) return;
+        if (block.timestamp == state.lastUpdateTimestamp) return;
 
-        uint256 oldBorrowIndex = reserve.state.borrowIndex;
         uint256 newBorrowIndex = _previewBorrowIndex(asset, block.timestamp);
         uint256 newLiquidityIndex = _previewLiquidityIndex(asset, block.timestamp);
 
         uint256 scaledDebt = ScaledDebtToken(reserve.debtToken).scaledTotalSupply();
 
-        uint256 debtBefore = _scaledDebtToActual(scaledDebt, oldBorrowIndex);
+        uint256 debtBefore = _scaledDebtToActual(scaledDebt, state.borrowIndex);
+
         uint256 debtAfter = _scaledDebtToActual(scaledDebt, newBorrowIndex);
 
-        uint256 borrowInterest = debtAfter - debtBefore;
-
         uint256 treasuryAccrual =
-            Math.mulDiv(borrowInterest, reserve.state.reserveFactor, DecimalMath.WAD, Math.Rounding.Floor);
+            Math.mulDiv(debtAfter - debtBefore, state.reserveFactor, DecimalMath.WAD, Math.Rounding.Floor);
 
-        reserve.state.accruedToTreasury += treasuryAccrual;
+        state.accruedToTreasuryScaled += Math.mulDiv(
+            treasuryAccrual, DecimalMath.WAD, newLiquidityIndex, Math.Rounding.Floor
+        );
 
-        reserve.state.borrowIndex = newBorrowIndex;
-        reserve.state.liquidityIndex = newLiquidityIndex;
-        reserve.state.lastUpdateTimestamp = block.timestamp;
+        state.borrowIndex = newBorrowIndex;
+        state.liquidityIndex = newLiquidityIndex;
+        state.lastUpdateTimestamp = block.timestamp;
     }
 
     function _updateRates(address asset) internal {
@@ -681,21 +712,51 @@ contract Pool is IPool, ReentrancyGuard {
         return BASE_RATE + SLOPE1 + postKinkContribution;
     }
 
-    function _liquidityRate(address asset, uint256 borrowRateWad, uint256 utilizationWad)
+    function _liquidityRate(
+        address asset,
+        uint256 borrowRateWad,
+        uint256 /* utilizationWad */
+    )
         internal
         view
         returns (uint256)
     {
-        if (utilizationWad == 0) return 0;
-
-        uint256 grossRate = Math.mulDiv(borrowRateWad, utilizationWad, DecimalMath.WAD, Math.Rounding.Trunc);
-
         DataTypes.ReserveData storage reserve = _getInitializedReserve(asset);
 
-        uint256 share = DecimalMath.WAD - reserve.state.reserveFactor;
+        uint256 effectiveScaledSupply =
+            ScaledSupplyToken(reserve.supplyToken).scaledTotalSupply() + reserve.state.accruedToTreasuryScaled;
 
-        return Math.mulDiv(grossRate, share, DecimalMath.WAD, Math.Rounding.Trunc);
+        uint256 index = _currentLiquidityIndex(asset);
+
+        // Round the denominator up to avoid overstating the distribution rate.
+        uint256 effectiveSupply = Math.mulDiv(effectiveScaledSupply, index, DecimalMath.WAD, Math.Rounding.Ceil);
+
+        if (effectiveSupply == 0) return 0;
+
+        uint256 debt = _totalDebtAtIndex(asset, _currentBorrowIndex(asset));
+
+        uint256 grossSupplyRate = Math.mulDiv(borrowRateWad, debt, effectiveSupply, Math.Rounding.Floor);
+
+        return Math.mulDiv(
+            grossSupplyRate, DecimalMath.WAD - reserve.state.reserveFactor, DecimalMath.WAD, Math.Rounding.Floor
+        );
     }
+
+    // function _liquidityRate(address asset, uint256 borrowRateWad, uint256 utilizationWad)
+    //     internal
+    //     view
+    //     returns (uint256)
+    // {
+    //     if (utilizationWad == 0) return 0;
+
+    //     uint256 grossRate = Math.mulDiv(borrowRateWad, utilizationWad, DecimalMath.WAD, Math.Rounding.Trunc);
+
+    //     DataTypes.ReserveData storage reserve = _getInitializedReserve(asset);
+
+    //     uint256 share = DecimalMath.WAD - reserve.state.reserveFactor;
+
+    //     return Math.mulDiv(grossRate, share, DecimalMath.WAD, Math.Rounding.Trunc);
+    // }
 
     function _scaledDebtToActual(uint256 scaledDebt, uint256 index) internal pure returns (uint256) {
         return Math.mulDiv(scaledDebt, index, DecimalMath.WAD, Math.Rounding.Ceil);

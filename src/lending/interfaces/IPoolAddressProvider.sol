@@ -8,9 +8,13 @@ interface IPoolAddressProvider {
 
     function setPriceOracle(address newOracle) external;
 
+    function setTreasury(address newTreasury) external;
+
     function getPool() external view returns (address);
 
     function getPoolConfigurator() external view returns (address);
 
     function getPriceOracle() external view returns (address);
+
+    function getTreasury() external view returns (address);
 }

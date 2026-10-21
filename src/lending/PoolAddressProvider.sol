@@ -17,10 +17,12 @@ contract PoolAddressProvider is IPoolAddressProvider, Ownable2Step {
     event PoolSet(address oldPool, address newPool);
     event PoolConfiguratorSet(address oldConfigurator, address newConfigurator);
     event OracleSet(address oldOracle, address newOracle);
+    event TreasuryUpdated(address indexed oldTreasury, address indexed newTreasury);
 
     address internal _pool;
     address internal _configurator;
     address internal _oracle;
+    address internal _treasury;
 
     constructor(address admin) Ownable(admin) { }
 
@@ -61,6 +63,15 @@ contract PoolAddressProvider is IPoolAddressProvider, Ownable2Step {
         emit OracleSet(oldOracle, newOracle);
     }
 
+    function setTreasury(address newTreasury) external onlyOwner {
+        require(newTreasury != address(0), ZeroAddress());
+
+        address oldTreasury = _treasury;
+        _treasury = newTreasury;
+
+        emit TreasuryUpdated(oldTreasury, newTreasury);
+    }
+
     function getPool() external view returns (address) {
         return _pool;
     }
@@ -71,5 +82,9 @@ contract PoolAddressProvider is IPoolAddressProvider, Ownable2Step {
 
     function getPriceOracle() external view returns (address) {
         return _oracle;
+    }
+
+    function getTreasury() external view returns (address) {
+        return _treasury;
     }
 }

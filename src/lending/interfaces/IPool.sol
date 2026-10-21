@@ -21,7 +21,19 @@ interface IPool {
 
     function borrow(address asset, uint256 amount, address onBehalfOf) external;
 
+    function repay(address asset, uint256 amount, address onBehalfOf) external returns (uint256 repaid);
+
     function finalizeTransfer(address asset, address from, address to) external;
+
+    function mintToTreasury(address[] calldata assets) external;
+
+    function liquidationCall(
+        address collateralAsset,
+        address debtAsset,
+        address user,
+        uint256 debtToCover,
+        bool receiveSupplyToken
+    ) external returns (uint256 debtRepaid, uint256 collateralSeized);
 
     function setUserUseReserveAsCollateral(address asset, bool enabled) external;
 
