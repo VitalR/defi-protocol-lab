@@ -44,4 +44,14 @@ contract PoolConfigurator is Ownable2Step {
 
         IPool(pool).configureReserve(asset, ltvWad, liquidationThresholdWad, liquidationBonusWad, borrowingEnabled);
     }
+
+    function setReserveCaps(address asset, uint256 supplyCap, uint256 borrowCap) external onlyOwner {
+        require(asset != address(0), ZeroAddress());
+
+        address pool = ADDRESSES_PROVIDER.getPool();
+
+        require(pool != address(0), PoolNotConfigured());
+
+        IPool(pool).setReserveCaps(asset, supplyCap, borrowCap);
+    }
 }

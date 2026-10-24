@@ -26,7 +26,14 @@ library DataTypes {
         uint256 ltvWad;
         uint256 liquidationThresholdWad;
         uint256 liquidationBonusWad;
+
+        // Underlying token units. Zero means unlimited.
+        uint256 supplyCap;
+        uint256 borrowCap;
+
         bool borrowingEnabled;
+        bool frozen;
+        bool paused;
     }
 
     struct AccountData {

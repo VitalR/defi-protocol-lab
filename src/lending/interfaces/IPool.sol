@@ -15,6 +15,8 @@ interface IPool {
         bool borrowingEnabled
     ) external;
 
+    function setReserveCaps(address asset, uint256 supplyCap, uint256 borrowCap) external;
+
     function supply(address asset, uint256 amount, address onBehalfOf) external;
 
     function withdraw(address asset, uint256 amount, address to) external returns (uint256 withdrawn);

@@ -46,6 +46,8 @@ contract Pool is IPool, ReentrancyGuard {
     error RepayTooSmall(uint256 amount);
     error PositionNotLiquidatable(uint256 healthFactor);
     error TreasuryNotConfigured();
+    error SupplyCapExceeded(address asset, uint256 cap, uint256 currentSupply, uint256 requested);
+    error BorrowCapExceeded(address asset, uint256 cap, uint256 projectedDebt);
 
     event ReserveInitialized(
         address indexed asset, address indexed supplyToken, address indexed debtToken, uint8 decimals
@@ -80,6 +82,7 @@ contract Pool is IPool, ReentrancyGuard {
     );
     event MintedToTreasury(address indexed asset, address indexed treasury, uint256 actualAmount, uint256 scaledAmount);
     event UserCollateralUsageChanged(address indexed user, address indexed asset, bool enabled);
+    event ReserveCapsUpdated(address indexed asset, uint256 supplyCap, uint256 borrowCap);
 
     uint256 public constant BASE_RATE = 0.02e18; // 2%
     uint256 public constant SLOPE1 = 0.04e18; // 4%;  slope1 - pre-kink slope
@@ -195,6 +198,19 @@ contract Pool is IPool, ReentrancyGuard {
         emit ReserveConfigured(asset, config.ltvWad, config.liquidationThresholdWad, config.borrowingEnabled);
     }
 
+    function setReserveCaps(address asset, uint256 supplyCap, uint256 borrowCap) external onlyConfigurator {
+        require(asset != address(0), ZeroAddress());
+        require(asset.code.length > 0, InvalidUnderlying(asset));
+
+        DataTypes.ReserveData storage reserve = _getInitializedReserve(asset);
+        DataTypes.ReserveConfiguration storage config = reserve.configuration;
+
+        config.supplyCap = supplyCap;
+        config.borrowCap = borrowCap;
+
+        emit ReserveCapsUpdated(asset, supplyCap, borrowCap);
+    }
+
     function supply(address asset, uint256 amount, address onBehalfOf) external nonReentrant {
         require(asset != address(0) && onBehalfOf != address(0), ZeroAddress());
         require(amount > 0, ZeroAmount());
@@ -202,6 +218,21 @@ contract Pool is IPool, ReentrancyGuard {
         _accrueReserve(asset);
 
         DataTypes.ReserveData storage reserve = _getInitializedReserve(asset);
+
+        uint256 supplyCap = reserve.configuration.supplyCap;
+
+        if (supplyCap != 0) {
+            uint256 effectiveScaledSupply =
+                ScaledSupplyToken(reserve.supplyToken).scaledTotalSupply() + reserve.state.accruedToTreasuryScaled;
+
+            uint256 currentSupply =
+                Math.mulDiv(effectiveScaledSupply, reserve.state.liquidityIndex, DecimalMath.WAD, Math.Rounding.Ceil);
+
+            require(
+                currentSupply <= supplyCap && amount <= supplyCap - currentSupply,
+                SupplyCapExceeded(asset, supplyCap, currentSupply, amount)
+            );
+        }
 
         uint256 scaledAmount = Math.mulDiv(amount, DecimalMath.WAD, reserve.state.liquidityIndex, Math.Rounding.Floor);
 
@@ -284,6 +315,19 @@ contract Pool is IPool, ReentrancyGuard {
         );
 
         uint256 scaledAmount = Math.mulDiv(amount, DecimalMath.WAD, reserve.state.borrowIndex, Math.Rounding.Ceil);
+
+        uint256 borrowCap = reserve.configuration.borrowCap;
+
+        if (borrowCap != 0) {
+            uint256 projectedDebt = Math.mulDiv(
+                debtToken.scaledTotalSupply() + scaledAmount,
+                reserve.state.borrowIndex,
+                DecimalMath.WAD,
+                Math.Rounding.Ceil
+            );
+
+            require(projectedDebt <= borrowCap, BorrowCapExceeded(asset, borrowCap, projectedDebt));
+        }
 
         reserve.state.availableLiquidity -= amount;
 
