@@ -17,6 +17,10 @@ interface IPool {
 
     function setReserveCaps(address asset, uint256 supplyCap, uint256 borrowCap) external;
 
+    function setReserveFreeze(address asset, bool frozen) external;
+
+    function setReservePause(address asset, bool paused) external;
+
     function supply(address asset, uint256 amount, address onBehalfOf) external;
 
     function withdraw(address asset, uint256 amount, address to) external returns (uint256 withdrawn);

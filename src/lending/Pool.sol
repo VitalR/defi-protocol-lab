@@ -48,6 +48,8 @@ contract Pool is IPool, ReentrancyGuard {
     error TreasuryNotConfigured();
     error SupplyCapExceeded(address asset, uint256 cap, uint256 currentSupply, uint256 requested);
     error BorrowCapExceeded(address asset, uint256 cap, uint256 projectedDebt);
+    error ReserveFrozen(address asset);
+    error ReservePaused(address asset);
 
     event ReserveInitialized(
         address indexed asset, address indexed supplyToken, address indexed debtToken, uint8 decimals
@@ -55,6 +57,10 @@ contract Pool is IPool, ReentrancyGuard {
     event ReserveConfigured(
         address indexed asset, uint256 ltvWad, uint256 liquidationThresholdWad, bool borrowingEnabled
     );
+    event ReserveCapsUpdated(address indexed asset, uint256 supplyCap, uint256 borrowCap);
+    event ReserveFreezeUpdated(address indexed asset, bool frozen);
+    event ReservePauseUpdated(address indexed asset, bool paused);
+
     event Supplied(
         address indexed asset,
         address indexed caller,
@@ -82,7 +88,6 @@ contract Pool is IPool, ReentrancyGuard {
     );
     event MintedToTreasury(address indexed asset, address indexed treasury, uint256 actualAmount, uint256 scaledAmount);
     event UserCollateralUsageChanged(address indexed user, address indexed asset, bool enabled);
-    event ReserveCapsUpdated(address indexed asset, uint256 supplyCap, uint256 borrowCap);
 
     uint256 public constant BASE_RATE = 0.02e18; // 2%
     uint256 public constant SLOPE1 = 0.04e18; // 4%;  slope1 - pre-kink slope
@@ -211,13 +216,32 @@ contract Pool is IPool, ReentrancyGuard {
         emit ReserveCapsUpdated(asset, supplyCap, borrowCap);
     }
 
+    function setReserveFreeze(address asset, bool frozen) external onlyConfigurator {
+        DataTypes.ReserveData storage reserve = _getInitializedReserve(asset);
+
+        reserve.configuration.frozen = frozen;
+
+        emit ReserveFreezeUpdated(asset, frozen);
+    }
+
+    function setReservePause(address asset, bool paused) external onlyConfigurator {
+        DataTypes.ReserveData storage reserve = _getInitializedReserve(asset);
+
+        reserve.configuration.paused = paused;
+
+        emit ReservePauseUpdated(asset, paused);
+    }
+
     function supply(address asset, uint256 amount, address onBehalfOf) external nonReentrant {
         require(asset != address(0) && onBehalfOf != address(0), ZeroAddress());
         require(amount > 0, ZeroAmount());
 
-        _accrueReserve(asset);
-
         DataTypes.ReserveData storage reserve = _getInitializedReserve(asset);
+
+        require(!reserve.configuration.paused, ReservePaused(asset));
+        require(!reserve.configuration.frozen, ReserveFrozen(asset));
+
+        _accrueReserve(asset);
 
         uint256 supplyCap = reserve.configuration.supplyCap;
 
@@ -253,9 +277,12 @@ contract Pool is IPool, ReentrancyGuard {
         require(asset != address(0) && to != address(0), ZeroAddress());
         require(amount > 0, ZeroAmount());
 
+        DataTypes.ReserveData storage reserve = _getInitializedReserve(asset);
+
+        require(!reserve.configuration.paused, ReservePaused(asset));
+
         _accrueReserve(asset);
 
-        DataTypes.ReserveData storage reserve = _getInitializedReserve(asset);
         ScaledSupplyToken supplyToken = ScaledSupplyToken(reserve.supplyToken);
 
         bool wasUsingAsCollateral = _usingAsCollateral[msg.sender][asset];
@@ -302,6 +329,9 @@ contract Pool is IPool, ReentrancyGuard {
         require(amount > 0, ZeroAmount());
 
         DataTypes.ReserveData storage reserve = _getInitializedReserve(asset);
+
+        require(!reserve.configuration.paused, ReservePaused(asset));
+        require(!reserve.configuration.frozen, ReserveFrozen(asset));
 
         require(reserve.configuration.borrowingEnabled, BorrowingDisabled(asset));
 
@@ -353,6 +383,8 @@ contract Pool is IPool, ReentrancyGuard {
 
         DataTypes.ReserveData storage reserve = _getInitializedReserve(asset);
 
+        require(!reserve.configuration.paused, ReservePaused(asset));
+
         _accrueReserve(asset);
 
         ScaledDebtToken debtToken = ScaledDebtToken(reserve.debtToken);
@@ -386,6 +418,8 @@ contract Pool is IPool, ReentrancyGuard {
 
         require(msg.sender == reserve.supplyToken, OnlySupplyToken(msg.sender));
 
+        require(!reserve.configuration.paused, ReservePaused(asset));
+
         require(from != address(0) && to != address(0), ZeroAddress());
 
         if (from == to) return;
@@ -416,6 +450,10 @@ contract Pool is IPool, ReentrancyGuard {
         DataTypes.ReserveData storage collateralReserve = _getInitializedReserve(collateralAsset);
 
         DataTypes.ReserveData storage debtReserve = _getInitializedReserve(debtAsset);
+
+        require(!collateralReserve.configuration.paused, ReservePaused(collateralAsset));
+
+        require(!debtReserve.configuration.paused, ReservePaused(debtAsset));
 
         _accrueReserve(debtAsset);
 
@@ -512,6 +550,8 @@ contract Pool is IPool, ReentrancyGuard {
 
             DataTypes.ReserveData storage reserve = _getInitializedReserve(asset);
 
+            require(!reserve.configuration.paused, ReservePaused(asset));
+
             _accrueReserve(asset);
 
             uint256 scaledAmount = reserve.state.accruedToTreasuryScaled;
@@ -532,6 +572,10 @@ contract Pool is IPool, ReentrancyGuard {
     }
 
     function setUserUseReserveAsCollateral(address asset, bool enabled) external nonReentrant {
+        DataTypes.ReserveData storage reserve = _getInitializedReserve(asset);
+
+        require(!reserve.configuration.paused, ReservePaused(asset));
+
         bool wasEnabled = _usingAsCollateral[msg.sender][asset];
 
         _setUserUseReserveAsCollateral(msg.sender, asset, enabled);

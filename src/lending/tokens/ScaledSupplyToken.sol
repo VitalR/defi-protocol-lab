@@ -149,9 +149,10 @@ contract ScaledSupplyToken is IERC20Metadata {
 
                 _scaledBalances[to] += scaledAmount;
             }
-            // Pool validates the sender's remaining collateral position.
-            IPool(POOL).finalizeTransfer(UNDERLYING_ASSET, from, to);
         }
+        // Always validate transfer availability, including self/zero transfers.
+        // Pool validates the sender's remaining collateral position.
+        IPool(POOL).finalizeTransfer(UNDERLYING_ASSET, from, to);
 
         emit Transfer(from, to, actualAmount);
 
